@@ -1,0 +1,15 @@
+.DS_Store
+.cursor
+.idea
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+*.log
+
+node_modules
+
+.github
+
+README.md
