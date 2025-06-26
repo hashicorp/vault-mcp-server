@@ -73,6 +73,28 @@ clients.
 <b>Note: Visual Studio Code will prompt you for the VAULT_TOKEN once and, store
 it securely in the client.</b>
 
+## Working with Docker
+
+Build the docker image and create a network
+
+```
+docker build -t vault-mcp-server .
+docker network create mcp
+```
+
+Run the Vault container and get the root token
+
+```
+docker run --cap-add=IPC_LOCK --name=vault-dev --network=mcp -p 8200:8200 hashicorp/vault server -dev
+docker logs vault-dev
+```
+
+Run the Vault MCP server
+
+```
+docker run --network=mcp -p 3000:3000 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' vault-mcp-server vault-mcp-server
+```
+
 ## Available Tools
 
 ### create-mount
