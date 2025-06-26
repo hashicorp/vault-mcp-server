@@ -7,14 +7,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-type ServerTool struct {
-	Tool    mcp.Tool
-	Handler server.ToolHandlerFunc
-}
+func ReadSecrets() server.ServerTool {
 
-func ReadSecrets() *ServerTool {
-
-	return &ServerTool{
+	return server.ServerTool{
 		Tool: mcp.NewTool("echo"),
 
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

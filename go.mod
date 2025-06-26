@@ -1,4 +1,4 @@
-module mcp-server-vault
+module vault-mcp-server
 
 go 1.24
 
