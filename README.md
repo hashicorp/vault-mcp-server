@@ -92,7 +92,7 @@ docker logs vault-dev
 Run the Vault MCP server
 
 ```
-docker run --network=mcp -p 3000:3000 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' vault-mcp-server vault-mcp-server
+docker run --network=mcp -p 3000:3000 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' vault-mcp-server
 ```
 
 ## Available Tools
