@@ -92,7 +92,10 @@ func main() {
 		server.WithHooks(hooks),
 	)
 
-	var serverTools = []server.ServerTool{tools.ReadSecrets()}
+	var serverTools = []server.ServerTool{
+		tools.ReadSecret(),
+		tools.WriteSecret(),
+	}
 
 	mcpServer.AddTools(serverTools...)
 
