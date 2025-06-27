@@ -93,6 +93,10 @@ func main() {
 	)
 
 	var serverTools = []server.ServerTool{
+		tools.ListMounts(),
+		tools.CreateMount(),
+		tools.DeleteMount(),
+		tools.ListSecrets(),
 		tools.ReadSecret(),
 		tools.WriteSecret(),
 	}
