@@ -1,21 +1,73 @@
-FROM node:22-bookworm AS build-stage
+# Copyright (c) HashiCorp, Inc.
+# SPDX-License-Identifier: MPL-2.0
 
-WORKDIR /app
-COPY package.json yarn.lock ./
-RUN --mount=type=ssh yarn install --production --frozen-lockfile && yarn cache clean --force
+# This Dockerfile contains multiple targets.
+# Use 'docker build --target=<name> .' to build one.
 
-COPY . .
+# ===================================
+#
+#   Non-release images.
+#
+# ===================================
 
-# production stage
-FROM node:22-alpine AS production-stage
+# certbuild captures the ca-certificates
+FROM docker.mirror.hashicorp.services/alpine:3.22 AS certbuild
+RUN apk add --no-cache ca-certificates
 
-WORKDIR /app
+# devbuild compiles the binary
+# -----------------------------------
+FROM golang:1.24.4-alpine@sha256:e5c2e59960f8636d02f77029c8f0a7a6b882f87fee8d2e4a9ce6c9ff112ed735 AS devbuild
+ARG VERSION="dev"
+# Set the working directory
+WORKDIR /build
+RUN go env -w GOMODCACHE=/root/.cache/go-build
+# Install dependencies
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/root/.cache/go-build go mod download
+COPY . ./
+# Build the server
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldflags="-s -w -X vault-mcp-server/version.GitCommit=$(shell git rev-parse HEAD) -X vault-mcp-server/version.BuildDate=$(shell git show --no-show-signature -s --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)" \
+    -o vault-mcp-server ./main.go
 
-# Only copy production dependencies and built files
-COPY --from=build-stage /app/node_modules ./node_modules
-COPY --from=build-stage /app/. /app/
+# dev runs the binary from devbuild
+# -----------------------------------
+# Make a stage to run the app
+FROM scratch AS dev
+ARG VERSION="dev"
+# Set the working directory
+WORKDIR /server
+# Copy the binary from the build stage
+COPY --from=devbuild /build/vault-mcp-server .
+COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# Command to run the server
+CMD ["./vault-mcp-server", "stdio"]
 
-# Remove unnecessary files (docs, tests, etc.) if possible
-RUN rm -rf /app/.git /app/tests /app/test /app/docs /app/.github || true
+# ===================================
+#
+#   Release images that uses CI built binaries (CRT generated)
+#
+# ===================================
 
-CMD ["node", "sse-server.js"]
+# default release image (refereced in .github/workflows/build.yml)
+# -----------------------------------
+FROM scratch AS release-default
+ARG BIN_NAME
+# Export BIN_NAME for the CMD below, it can't see ARGs directly.
+ENV BIN_NAME=$BIN_NAME
+ARG PRODUCT_VERSION
+ARG PRODUCT_REVISION
+ARG PRODUCT_NAME=$BIN_NAME
+# TARGETARCH and TARGETOS are set automatically when --platform is provided.
+ARG TARGETOS TARGETARCH
+LABEL version=$PRODUCT_VERSION
+LABEL revision=$PRODUCT_REVISION
+COPY dist/$TARGETOS/$TARGETARCH/$BIN_NAME /bin/vault-mcp-server
+COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+CMD ["/bin/vault-mcp-server", "stdio"]
+
+# ===================================
+#
+#   Set default target to 'dev'.
+#
+# ===================================
+FROM dev
