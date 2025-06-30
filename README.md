@@ -1,9 +1,9 @@
 # Vault MCP Server
 
 A Model Context Protocol (MCP) server that provides integration with HashiCorp
-Vault for managing secrets and mounts. This server uses the SSE transport for
-MCP communication, making it compatible with Claude for Desktop and other MCP
-clients.
+Vault for managing secrets and mounts. This server uses the Streamable HTTP
+transport for MCP communication, making it compatible with Claude for Desktop 
+and other MCP clients.
 
 ## Features
 
@@ -15,25 +15,28 @@ clients.
 - List all secrets under a path
 
 ## Prerequisites
-
-- Node.js 20 or higher
+- Go 1.24 or later (if building from source)
+- Docker
 - HashiCorp Vault server running locally or remotely
 - A valid Vault token with appropriate permissions
 
 ## Setup
 
-1. Clone this repository
-
-2. Install dependencies:
+1. Clone the repository:
+    ```bash
+    git clone https://github.com/hashicorp/vault-mcp-server.git
+    cd vault-mcp-server
+    ```
+2. Build the Docker image:
 
     ```bash
-    npm install
+    make
     ```
 
 3. Start the server:
 
     ```bash
-    npm start
+    vault-mcp-server -addr 127.0.0.1:3000
     ```
 
 ## Integration with Visual Studio Code
@@ -59,7 +62,7 @@ clients.
          ],
          "servers": {
              "MCP Server Vault": {
-                 "url": "http://localhost:3000/sse?VAULT_ADDR=http://127.0.0.1:8200",
+                 "url": "http://localhost:3000/mcp?VAULT_ADDR=http://127.0.0.1:8200",
                  "headers": {
                      "VAULT_TOKEN" : "${input:vault-token}"
                  }
@@ -78,7 +81,7 @@ it securely in the client.</b>
 Build the docker image and create a network
 
 ```
-docker build -t vault-mcp-server .
+make docker-build
 docker network create mcp
 ```
 
@@ -92,7 +95,7 @@ docker logs vault-dev
 Run the Vault MCP server
 
 ```
-docker run --network=mcp -p 3000:3000 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' vault-mcp-server
+docker run --network=mcp -p 3000:3000 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' vault-mcp-server:dev
 ```
 
 ## Available Tools
