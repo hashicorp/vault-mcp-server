@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"strings"
 	"vault-mcp-server/vault"
 )
 
@@ -31,8 +32,9 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 
 	client := vault.GetVaultClient(session.SessionID())
 
-	mount := req.GetArguments()["mount"].(string)
-	path := req.GetArguments()["path"].(string)
+	mount := strings.TrimSuffix(strings.TrimPrefix(req.GetArguments()["mount"].(string), "/"), "/") // Ensure mount is trimmed of leading/trailing slash
+	path := strings.TrimPrefix(req.GetArguments()["path"].(string), "/")
+	
 	key := req.GetArguments()["key"].(string)
 	value := req.GetArguments()["value"].(string)
 
