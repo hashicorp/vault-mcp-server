@@ -31,6 +31,11 @@ func newSession(ctx context.Context, session server.ClientSession) {
 		return
 	}
 
+	// fallback to default dev HTTP Vault address if not provided
+	if vaultAddress == "" {
+		vaultAddress = "http://127.0.0.1:8200"
+	}
+
 	vaultToken, ok := ctx.Value(VaultTokenHeader).(string)
 	if !ok {
 		// TODO: Disconnect the session if the token is not provided

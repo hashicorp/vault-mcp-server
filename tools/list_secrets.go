@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"strings"
 	"vault-mcp-server/vault"
 )
 
@@ -32,12 +33,23 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 
 	client := vault.GetVaultClient(session.SessionID())
 
-	mount := req.GetArguments()["mount"].(string)
-	path := req.GetArguments()["path"].(string)
+	mount := strings.TrimSuffix(strings.TrimPrefix(req.GetArguments()["mount"].(string), "/"), "/") // Ensure mount is trimmed of leading/trailing slash
+	path := strings.TrimPrefix(req.GetArguments()["path"].(string), "/")
 
-	path = mount + "/" + path
+	mounts, err := client.Sys().ListMounts()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list mounts: %v", err)
+	}
+
+	if m, ok := mounts[mount+"/"]; ok && m.Options["version"] == "2" {
+		// Convert path from secret/my-secret to secret/data/my-secret
+		path = fmt.Sprintf(mount+"/metadata/%s", path)
+	} else {
+		path = fmt.Sprintf(mount+"/%s", path)
+	}
 
 	value, err := client.Logical().List(path)
+
 	if err != nil {
 		return nil, err
 	}
@@ -46,8 +58,13 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		return mcp.NewToolResultText("path does not contain any values"), nil
 	}
 
+	data, ok := value.Data["keys"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected keys data format for list API")
+	}
+
 	// Marshal the struct to JSON (returns a []byte slice)
-	jsonData, err := json.Marshal(value)
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling JSON: %v", err)
 	}
