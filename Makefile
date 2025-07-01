@@ -25,6 +25,10 @@ OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
 build:
 	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./main.go
 
+run: clean build
+	@echo "Running $(BINARY_NAME) version $(VERSION)..."
+	@./$(BINARY_NAME) -addr 127.0.0.1:3000
+
 crt-build:
 	@mkdir -p $(TARGET_DIR)
 	@$(CURDIR)/scripts/crt-build.sh build
