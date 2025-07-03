@@ -44,7 +44,7 @@ function build() {
   # Get or set our basic build metadata
   revision=$(build_revision)
   build_date=$(build_date) #
-  : "${BIN_PATH:="dist/"}" #if not run by actions-go-build (enos local) then set this explicitly
+  : "${BIN_PATH:="dist/vault-mcp-server"}" #if not run by actions-go-build (enos local) then set this explicitly
   : "${GO_TAGS:=""}"
   : "${KEEP_SYMBOLS:=""}"
 
@@ -79,7 +79,7 @@ function build() {
   # Build vault-mcp-server
   # Always use CGO_ENABLED=0 to ensure a statically linked binary is built
   echo "$msg"
-  CGO_ENABLED=0 go build -o "$BIN_PATH" -tags "$GO_TAGS" -ldflags "$ldflags" -trimpath -buildvcs=false ./cmd/vault-mcp-server
+  CGO_ENABLED=0 go build -o "$BIN_PATH" -tags "$GO_TAGS" -ldflags "$ldflags" -trimpath -buildvcs=false ./main.go
 }
 
 # Run the CRT Builder
