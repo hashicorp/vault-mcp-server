@@ -26,8 +26,8 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/root/.cache/go-build go mod download
 COPY . ./
 # Build the server
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldflags="-s -w -X vault-mcp-server/version.GitCommit=$(shell git rev-parse HEAD) -X vault-mcp-server/version.BuildDate=$(shell git show --no-show-signature -s --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)" \
-    -o vault-mcp-server ./main.go
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/hashicorp/vault-mcp-server/version.GitCommit=$(shell git rev-parse HEAD) -X github.com/hashicorp/vault-mcp-server/version.BuildDate=$(shell git show --no-show-signature -s --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)" \
+    -o vault-mcp-server ./cmd/vault-mcp-server
 
 # dev runs the binary from devbuild
 # -----------------------------------
