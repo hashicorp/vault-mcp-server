@@ -34,7 +34,7 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-./vault-mcp-server
+vault-mcp-server
 dist/
 *.log
 
