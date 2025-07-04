@@ -1,60 +1,49 @@
-vault-mcp-server
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Environment variables
-.env
-.env.local
-.env.*.local
-.env.development
-.env.test
-.env.production
+# Test binary, built with `go test -c`
+*.test
 
-# Build outputs
-dist/
-build/
-coverage/
-.next/
-out/
-.nuxt/
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
 
-# IDE and editor files
-.idea/
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
 .vscode/
+.idea/
 *.swp
 *.swo
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+*~
 
-# Logs
-logs
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+vault-mcp-server
+dist/
 *.log
 
-# Optional npm cache directory
-.npm
+# Terraform files (if any)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
 
-# Optional eslint cache
-.eslintcache
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# TypeScript
-*.tsbuildinfo
-
-# Debug
-.debug/
-
-# Misc
-.cache/
-.temp/
-.tmp/
-tmp/
-temp/ 
+# Environment files
+.env
+.env.local
