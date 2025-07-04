@@ -1,28 +1,9 @@
-# Changelog
+## 0.1.0
 
-All notable changes to this project will be documented in this file.
+FEATURES
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.1.0] - 2025-07-03
-
-### Added
 - Initial release of Vault MCP Server
 - Support for Vault mount operations (create, list, delete)
 - Support for Vault secret operations (read, write, list)
 - Docker support
-- Basic HTTP transport support
-- Basic STDIO transport support
-
-### Changed
-- Moved from simple HTTP server to StreamableHTTP transport
-- Reorganized code into pkg/hashicorp/vault structure
-- Updated build system and Makefile
-- Improved parameter validation and error messages
-- Enhanced Docker support with multi-stage builds
-
-### Fixed
-- Parameter parsing for MCP tool requests
-- Client session management
-- Environment variable handling
+- Basic HTTP & STDIO transport support
