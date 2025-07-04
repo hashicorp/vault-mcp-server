@@ -53,7 +53,7 @@ docker-build:
 
 # Run HTTP server locally
 run-http:
-	./$(BINARY_NAME) http --port 8080
+	./$(BINARY_NAME) http --transport-port 8080
 
 # Run HTTP server in Docker
 docker-run-http:

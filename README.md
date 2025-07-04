@@ -13,6 +13,9 @@ and other MCP clients.
 - Write secrets to KV mounts
 - Read secrets from KV mounts
 - List all secrets under a path
+- Comprehensive HTTP middleware stack (CORS, logging, Vault context)
+- Session-based Vault client management
+- Structured logging with configurable output
 
 ## Prerequisites
 - Go 1.24 or later (if building from source)
@@ -56,7 +59,24 @@ The server can be configured using environment variables:
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
 - `VAULT_TOKEN`: Vault authentication token (required)
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
+- `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `0.0.0.0`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
+
+## HTTP Mode Configuration
+
+In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
+
+1. **HTTP Headers**: `VAULT_ADDR` and `VAULT_TOKEN` headers
+2. **Query Parameters**: `?VAULT_ADDR=...&VAULT_TOKEN=...`
+3. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
+
+### Middleware Stack
+
+The HTTP server includes a comprehensive middleware stack:
+
+- **CORS Middleware**: Enables cross-origin requests with appropriate headers
+- **Vault Context Middleware**: Extracts Vault configuration and adds to request context
+- **Logging Middleware**: Structured HTTP request logging
 
 ## Integration with Visual Studio Code
 
@@ -177,6 +197,9 @@ Reads a secret from a KV mount in Vault.
 
 # Show version
 ./vault-mcp-server --version
+
+# Run with custom log file
+./vault-mcp-server --log-file /path/to/logfile.log
 ```
 
 ## Using the MCP Inspector
@@ -221,4 +244,19 @@ make test-e2e
 
 # Test HTTP endpoint
 make test-http
+```
+
+### Project Structure
+
+```
+vault-mcp-server/
+├── cmd/vault-mcp-server/          # Main application entry point
+├── pkg/hashicorp/vault/           # Core vault functionality
+│   ├── client.go                  # Vault client management
+│   ├── middleware.go              # HTTP middleware stack
+│   ├── tools.go                   # Tool registration
+│   └── *_test.go                  # Unit tests
+├── version/                       # Version management
+├── e2e/                          # End-to-end tests
+└── resources/                     # Resource definitions
 ```

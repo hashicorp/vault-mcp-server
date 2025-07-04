@@ -10,8 +10,6 @@ import (
 	stdlog "log"
 	"os"
 
-	"github.com/hashicorp/vault-mcp-server/pkg/hashicorp/vault"
-
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -36,8 +34,11 @@ func initConfig() {
 }
 
 func initLogger(outPath string) (*log.Logger, error) {
+	logger := log.New()
+	logger.SetLevel(log.DebugLevel)
+	
 	if outPath == "" {
-		return log.New(), nil
+		return logger, nil
 	}
 
 	file, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -45,15 +46,8 @@ func initLogger(outPath string) (*log.Logger, error) {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	logger := log.New()
-	logger.SetLevel(log.DebugLevel)
 	logger.SetOutput(file)
-
 	return logger, nil
-}
-
-func vaultInit(hcServer *server.MCPServer, logger *log.Logger) {
-	vault.InitTools(hcServer, logger)
 }
 
 func serverInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger) error {

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/hashicorp/vault"
 	"github.com/hashicorp/vault-mcp-server/version"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -83,8 +84,8 @@ func runHTTPServer(logger *log.Logger, host string, port string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version)
-	vaultInit(hcServer, logger)
+	hcServer := NewServer(version.Version, logger)
+	vault.InitTools(hcServer, logger)
 
 	return httpServerInit(ctx, hcServer, logger, host, port)
 }
@@ -110,10 +111,15 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		w.Write([]byte(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http"}`))
 	})
 
+	// Apply middleware stack
+	handler := vault.CORSMiddleware()(mux)
+	handler = vault.VaultContextMiddleware(logger)(handler)
+	handler = vault.LoggingMiddleware(logger)(handler)
+
 	addr := fmt.Sprintf("%s:%s", host, port)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -147,19 +153,31 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version)
-	vaultInit(hcServer, logger)
+	hcServer := NewServer(version.Version, logger)
+	vault.InitTools(hcServer, logger)
 
 	return serverInit(ctx, hcServer, logger)
 }
 
-func NewServer(version string, opts ...server.ServerOption) *server.MCPServer {
+func NewServer(version string, logger *log.Logger, opts ...server.ServerOption) *server.MCPServer {
 	// Add default options
 	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 	}
 	opts = append(defaultOpts, opts...)
+
+	// Create hooks for session management
+	hooks := &server.Hooks{}
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+		vault.NewSessionHandler(ctx, session, logger)
+	})
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+		vault.EndSessionHandler(ctx, session, logger)
+	})
+
+	// Add hooks to options
+	opts = append(opts, server.WithHooks(hooks))
 
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -191,7 +209,7 @@ func main() {
 	// Check environment variables first - they override command line args
 	if shouldUseHTTPMode() {
 		port := getHTTPPort()
-		host := "0.0.0.0"
+		host := getHTTPHost()
 
 		logFile, _ := rootCmd.PersistentFlags().GetString("log-file")
 		logger, err := initLogger(logFile)
@@ -223,4 +241,12 @@ func getHTTPPort() string {
 		return port
 	}
 	return "8080"
+}
+
+// getHTTPHost returns the host from environment variables or default
+func getHTTPHost() string {
+	if host := os.Getenv("TRANSPORT_HOST"); host != "" {
+		return host
+	}
+	return "0.0.0.0"
 }
