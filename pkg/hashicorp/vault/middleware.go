@@ -38,7 +38,7 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 				if header == VaultTokenHeader && headerValue != "" {
 					logger.Debug("Vault token provided via request context")
 				} else if header == VaultAddressHeader && headerValue != "" {
-					logger.WithField("vault_addr", headerValue).Debug("Vault address configured")
+					logger.Debug("Vault address configured via request context")
 				}
 			}
 
