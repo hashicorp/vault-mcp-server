@@ -17,12 +17,12 @@ func TestVaultContextMiddleware(t *testing.T) {
 	logger.SetOutput(os.Stdout)
 
 	tests := []struct {
-		name           string
-		headers        map[string]string
-		queryParams    map[string]string
-		envVars        map[string]string
-		expectedAddr   string
-		expectedToken  string
+		name          string
+		headers       map[string]string
+		queryParams   map[string]string
+		envVars       map[string]string
+		expectedAddr  string
+		expectedToken string
 	}{
 		{
 			name: "headers take precedence",
@@ -68,13 +68,13 @@ func TestVaultContextMiddleware(t *testing.T) {
 			// Create test handler that checks context values
 			testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
-				
-				addr, ok := ctx.Value(contextKey(VaultAddressHeader)).(string)
+
+				addr, ok := ctx.Value(contextKey(VaultAddress)).(string)
 				if !ok {
 					addr = ""
 				}
-				
-				token, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
+
+				token, ok := ctx.Value(contextKey(VaultToken)).(string)
 				if !ok {
 					token = ""
 				}
@@ -82,7 +82,7 @@ func TestVaultContextMiddleware(t *testing.T) {
 				if addr != tt.expectedAddr {
 					t.Errorf("Expected VAULT_ADDR %s, got %s", tt.expectedAddr, addr)
 				}
-				
+
 				if token != tt.expectedToken {
 					t.Errorf("Expected VAULT_TOKEN %s, got %s", tt.expectedToken, token)
 				}
@@ -96,12 +96,12 @@ func TestVaultContextMiddleware(t *testing.T) {
 
 			// Create request
 			req := httptest.NewRequest("GET", "/test", nil)
-			
+
 			// Add headers
 			for key, value := range tt.headers {
 				req.Header.Set(key, value)
 			}
-			
+
 			// Add query parameters
 			q := req.URL.Query()
 			for key, value := range tt.queryParams {
@@ -131,7 +131,7 @@ func TestCORSMiddleware(t *testing.T) {
 	t.Run("adds CORS headers", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		rr := httptest.NewRecorder()
-		
+
 		handler.ServeHTTP(rr, req)
 
 		expectedHeaders := map[string]string{
@@ -150,7 +150,7 @@ func TestCORSMiddleware(t *testing.T) {
 	t.Run("handles OPTIONS request", func(t *testing.T) {
 		req := httptest.NewRequest("OPTIONS", "/test", nil)
 		rr := httptest.NewRecorder()
-		
+
 		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {

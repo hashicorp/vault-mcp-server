@@ -19,9 +19,11 @@ var (
 )
 
 const (
-	VaultAddressHeader = "VAULT_ADDR"
-	VaultTokenHeader   = "VAULT_TOKEN"
+	VaultAddress = "VAULT_ADDR"
+	VaultToken   = "VAULT_TOKEN"
 )
+
+const DefaultVaultAddress = "http://127.0.0.1:8200"
 
 // contextKey is a type alias to avoid lint warnings while maintaining compatibility
 type contextKey string
@@ -42,7 +44,7 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultToken string) (*
 
 	client, err := api.NewClient(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Vault client: %v", err)
+		return nil, fmt.Errorf("api.NewClient failed to create Vault client: %v", err)
 	}
 
 	client.SetToken(vaultToken)
@@ -66,11 +68,14 @@ func DeleteVaultClient(sessionId string) {
 }
 
 // GetVaultClientFromContext extracts Vault client from the MCP context
-func GetVaultClientFromContext(ctx context.Context) (*api.Client, error) {
+func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Client, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, fmt.Errorf("no active session")
 	}
+
+	// Log the session ID for debugging
+	logger.WithField("session_id", session.SessionID()).Debug("Retrieving Vault client for session")
 
 	// Try to get existing client
 	client := GetVaultClient(session.SessionID())
@@ -78,55 +83,53 @@ func GetVaultClientFromContext(ctx context.Context) (*api.Client, error) {
 		return client, nil
 	}
 
-	// Create new client if it doesn't exist, check ctx first
-	// for Vault address and token, otherwise use environment variables
-	vaultAddress, ok := ctx.Value(contextKey(VaultAddressHeader)).(string)
-	if !ok || vaultAddress == "" {
-		vaultAddress = getEnv(VaultAddressHeader, "http://127.0.0.1:8200")
-	}
-	
-	vaultToken, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
-	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultTokenHeader, "")
-		if vaultToken == "" {
-			return nil, fmt.Errorf("vault token not provided")
-		}
-	}
+	logger.WithField("session_id", session.SessionID()).Warn("Vault client not found, creating a new one")
 
-	return NewVaultClient(session.SessionID(), vaultAddress, vaultToken)
+	return CreateVaultClientForSession(ctx, session, logger)
 }
 
-// NewSessionHandler initializes a new Vault client for the session
-func NewSessionHandler(ctx context.Context, session server.ClientSession, logger *log.Logger) {
+func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
+
 	// Initialize a new Vault client for this session
-	vaultAddress, ok := ctx.Value(contextKey(VaultAddressHeader)).(string)
+	vaultAddress, ok := ctx.Value(contextKey(VaultAddress)).(string)
 	if !ok || vaultAddress == "" {
-		vaultAddress = getEnv(VaultAddressHeader, "http://127.0.0.1:8200")
+		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
-	vaultToken, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
+	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
 	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultTokenHeader, "")
+		vaultToken = getEnv(VaultToken, "")
 		if vaultToken == "" {
-			logger.Warn("Vault token not provided for session")
-			return
+			//logger.Warn("Vault token not provided for session")
+			return nil, fmt.Errorf("vault token not provided for session")
 		}
 	}
 
-	_, err := NewVaultClient(session.SessionID(), vaultAddress, vaultToken)
+	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultToken)
 	if err != nil {
-		logger.WithError(err).Error("Failed to create Vault client for session")
-		return
+		return nil, fmt.Errorf("NewVaultClient failed to create Vault client: %v", err)
 	}
 
 	logger.WithFields(log.Fields{
 		"session_id": session.SessionID(),
 		"vault_addr": vaultAddress,
-	}).Debug("Created Vault client for session")
+	}).Info("Created Vault client for session")
+
+	return newClient, nil
+}
+
+// NewSessionHandler initializes a new Vault client for the session
+func NewSessionHandler(ctx context.Context, session server.ClientSession, logger *log.Logger) {
+
+	_, err := CreateVaultClientForSession(ctx, session, logger)
+	if err != nil {
+		logger.WithError(err).Error("NewSessionHandler failed to create Vault client")
+		return
+	}
 }
 
 // EndSessionHandler cleans up the Vault client when the session ends
 func EndSessionHandler(_ context.Context, session server.ClientSession, logger *log.Logger) {
 	DeleteVaultClient(session.SessionID())
-	logger.WithField("session_id", session.SessionID()).Debug("Cleaned up Vault client for session")
+	logger.WithField("session_id", session.SessionID()).Info("Cleaned up Vault client for session")
 }

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	stdlog "log"
 	"net/http"
@@ -19,6 +20,12 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+)
+
+const (
+	DefaultBindAddress  = "127.0.0.1"
+	DefaultBindPort     = "8080"
+	DefaultEndPointPath = "/mcp"
 )
 
 var (
@@ -53,7 +60,7 @@ var (
 	httpCmd = &cobra.Command{
 		Use:   "http",
 		Short: "Start StreamableHTTP server",
-		Long:  `Start a server that communicates via StreamableHTTP transport on port 8080 at /mcp endpoint.`,
+		Long:  fmt.Sprintf("Start a server that communicates via StreamableHTTP transport on port %s at %s endpoint.", DefaultBindPort, DefaultEndPointPath),
 		Run: func(cmd *cobra.Command, _ []string) {
 			logFile, err := rootCmd.PersistentFlags().GetString("log-file")
 			if err != nil {
@@ -94,21 +101,24 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	// Create StreamableHTTP server which implements the new streamable-http transport
 	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
 	streamableServer := server.NewStreamableHTTPServer(hcServer,
-		server.WithEndpointPath("/mcp"), // Default MCP endpoint path
+		server.WithEndpointPath(DefaultEndPointPath), // Default MCP endpoint path
 		server.WithLogger(logger),
 	)
 
 	mux := http.NewServeMux()
 
 	// Handle the /mcp endpoint with the StreamableHTTP server
-	mux.Handle("/mcp", streamableServer)
-	mux.Handle("/mcp/", streamableServer)
+	mux.Handle(DefaultEndPointPath, streamableServer)
+	mux.Handle(DefaultEndPointPath+"/", streamableServer)
 
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http"}`))
+		_, err := w.Write([]byte(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http"}`))
+		if err != nil {
+			logger.WithError(err).Error("Error writing to response on /health")
+		}
 	})
 
 	// Apply middleware stack
@@ -129,7 +139,7 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	// Start server in goroutine
 	errC := make(chan error, 1)
 	go func() {
-		logger.Infof("Starting StreamableHTTP server on %s/mcp", addr)
+		logger.Infof("Starting StreamableHTTP server on %s%s", addr, DefaultEndPointPath)
 		errC <- httpServer.ListenAndServe()
 	}()
 
@@ -141,7 +151,7 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
 	case err := <-errC:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("StreamableHTTP server error: %w", err)
 		}
 	}
@@ -240,7 +250,7 @@ func getHTTPPort() string {
 	if port := os.Getenv("TRANSPORT_PORT"); port != "" {
 		return port
 	}
-	return "8080"
+	return DefaultBindPort
 }
 
 // getHTTPHost returns the host from environment variables or default
@@ -248,5 +258,5 @@ func getHTTPHost() string {
 	if host := os.Getenv("TRANSPORT_HOST"); host != "" {
 		return host
 	}
-	return "0.0.0.0"
+	return DefaultBindAddress
 }

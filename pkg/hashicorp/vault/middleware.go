@@ -16,7 +16,7 @@ import (
 func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requiredHeaders := []string{VaultAddressHeader, VaultTokenHeader}
+			requiredHeaders := []string{VaultAddress, VaultToken}
 			ctx := r.Context()
 
 			for _, header := range requiredHeaders {
@@ -35,9 +35,9 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 				ctx = context.WithValue(ctx, contextKey(header), headerValue)
 
 				// Log the source of the configuration (without exposing sensitive values)
-				if header == VaultTokenHeader && headerValue != "" {
+				if header == VaultToken && headerValue != "" {
 					logger.Debug("Vault token provided via request context")
-				} else if header == VaultAddressHeader && headerValue != "" {
+				} else if header == VaultAddress && headerValue != "" {
 					logger.Debug("Vault address configured via request context")
 				}
 			}

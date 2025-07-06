@@ -18,9 +18,10 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("create-mount",
 			mcp.WithDescription("Create a new mount in Vault"),
-			mcp.WithString("type", mcp.Required(), mcp.Description("The type of mount (e.g., 'kv', 'kv2')")),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created")),
-			mcp.WithString("description", mcp.Description("Description for the mount")),
+			mcp.WithString("type", mcp.Required(), mcp.Enum("kv", "kv2"), mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store.")),
+			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created. Examples would be 'secrets' or 'kv'.")),
+			mcp.WithString("description", mcp.DefaultString(""), mcp.Description("A description for the mount.")),
+			mcp.WithObject("options", mcp.Description("Optional mount options, specific to the mount type.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return createMountHandler(ctx, req, logger)
@@ -33,10 +34,11 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 
 	// Extract parameters
 	var mountType, path, description string
+	var options interface{}
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mountType, ok = args["type"].(string); !ok || mountType == "" {
+			if mountType, ok = args["type"].(string); !ok || mountType == "" || (mountType != "kv" && mountType != "kv2") {
 				return mcp.NewToolResultError("Missing or invalid 'type' parameter"), nil
 			}
 
@@ -45,6 +47,9 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 			}
 
 			description, _ = args["description"].(string)
+
+			options = args["options"]
+
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -59,7 +64,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Creating mount with parameters")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
@@ -69,6 +74,19 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	mountInput := &api.MountInput{
 		Type:        mountType,
 		Description: description,
+	}
+
+	if mountType == "kv2" {
+		mountInput.Options = make(map[string]string)
+		mountInput.Type = "kv"
+		if options != nil {
+			for key, value := range options.(map[string]interface{}) {
+				if s, ok := value.(string); ok {
+					mountInput.Options[key] = s
+				}
+			}
+		}
+		mountInput.Options["version"] = "2"
 	}
 
 	// Create the mount
