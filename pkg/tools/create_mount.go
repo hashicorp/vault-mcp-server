@@ -1,22 +1,23 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// CreateMount creates a tool for creating Vault mounts
-func CreateMount(logger *log.Logger) server.ServerTool {
+// createMount creates a tool for creating Vault mounts
+func createMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("create-mount",
+		Tool: mcp.NewTool("createMount",
 			mcp.WithDescription("Create a new mount in Vault"),
 			mcp.WithString("type", mcp.Required(), mcp.Description("The type of mount (e.g., 'kv', 'kv2')")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created")),
@@ -29,7 +30,7 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 }
 
 func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling create-mount request")
+	logger.Debug("Handling createMount request")
 
 	// Extract parameters
 	var mountType, path, description string
@@ -59,7 +60,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Creating mount with parameters")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

@@ -1,21 +1,22 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// DeleteMount creates a tool for deleting Vault mounts
-func DeleteMount(logger *log.Logger) server.ServerTool {
+// deleteMount creates a tool for deleting Vault mounts
+func deleteMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("delete-mount",
+		Tool: mcp.NewTool("deleteMount",
 			mcp.WithDescription("Delete a mount in Vault"),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path to the mount to be deleted")),
 		),
@@ -26,7 +27,7 @@ func DeleteMount(logger *log.Logger) server.ServerTool {
 }
 
 func deleteMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling delete-mount request")
+	logger.Debug("Handling deleteMount request")
 
 	// Extract parameters
 	var path string
@@ -46,7 +47,7 @@ func deleteMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.WithField("path", path).Debug("Deleting mount")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

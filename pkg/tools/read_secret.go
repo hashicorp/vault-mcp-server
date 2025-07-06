@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
@@ -9,15 +9,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// ReadSecret creates a tool for reading secrets from a Vault KV mount
-func ReadSecret(logger *log.Logger) server.ServerTool {
+// readSecret creates a tool for reading secrets from a Vault KV mount
+func readSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("read-secret",
+		Tool: mcp.NewTool("readSecret",
 			mcp.WithDescription("Read a secret from a KV mount in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to read the secret from")),
@@ -29,7 +30,7 @@ func ReadSecret(logger *log.Logger) server.ServerTool {
 }
 
 func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling read-secret request")
+	logger.Debug("Handling readSecret request")
 
 	// Extract parameters
 	var mount, path string
@@ -56,7 +57,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	}).Debug("Reading secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

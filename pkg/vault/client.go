@@ -23,11 +23,11 @@ const (
 	VaultTokenHeader   = "VAULT_TOKEN"
 )
 
-// contextKey is a type alias to avoid lint warnings while maintaining compatibility
-type contextKey string
+// ContextKey is a type alias to avoid lint warnings while maintaining compatibility
+type ContextKey string
 
-// getEnv retrieves the value of an environment variable or returns a fallback value if not set
-func getEnv(key, fallback string) string {
+// GetEnv retrieves the value of an environment variable or returns a fallback value if not set
+func GetEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
@@ -80,14 +80,14 @@ func GetVaultClientFromContext(ctx context.Context) (*api.Client, error) {
 
 	// Create new client if it doesn't exist, check ctx first
 	// for Vault address and token, otherwise use environment variables
-	vaultAddress, ok := ctx.Value(contextKey(VaultAddressHeader)).(string)
+	vaultAddress, ok := ctx.Value(ContextKey(VaultAddressHeader)).(string)
 	if !ok || vaultAddress == "" {
-		vaultAddress = getEnv(VaultAddressHeader, "http://127.0.0.1:8200")
+		vaultAddress = GetEnv(VaultAddressHeader, "http://127.0.0.1:8200")
 	}
-	
-	vaultToken, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
+
+	vaultToken, ok := ctx.Value(ContextKey(VaultTokenHeader)).(string)
 	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultTokenHeader, "")
+		vaultToken = GetEnv(VaultTokenHeader, "")
 		if vaultToken == "" {
 			return nil, fmt.Errorf("vault token not provided")
 		}
@@ -99,14 +99,14 @@ func GetVaultClientFromContext(ctx context.Context) (*api.Client, error) {
 // NewSessionHandler initializes a new Vault client for the session
 func NewSessionHandler(ctx context.Context, session server.ClientSession, logger *log.Logger) {
 	// Initialize a new Vault client for this session
-	vaultAddress, ok := ctx.Value(contextKey(VaultAddressHeader)).(string)
+	vaultAddress, ok := ctx.Value(ContextKey(VaultAddressHeader)).(string)
 	if !ok || vaultAddress == "" {
-		vaultAddress = getEnv(VaultAddressHeader, "http://127.0.0.1:8200")
+		vaultAddress = GetEnv(VaultAddressHeader, "http://127.0.0.1:8200")
 	}
 
-	vaultToken, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
+	vaultToken, ok := ctx.Value(ContextKey(VaultTokenHeader)).(string)
 	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultTokenHeader, "")
+		vaultToken = GetEnv(VaultTokenHeader, "")
 		if vaultToken == "" {
 			logger.Warn("Vault token not provided for session")
 			return

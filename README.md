@@ -52,9 +52,11 @@ and other MCP clients.
     make run-http
     ```
 
-## Environment Variables
+## Configuration
 
-The server can be configured using environment variables:
+### Environment Variables
+
+The server can be configured using the following environment variables:
 
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
 - `VAULT_TOKEN`: Vault authentication token (required)
@@ -62,136 +64,103 @@ The server can be configured using environment variables:
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `0.0.0.0`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
 
-## HTTP Mode Configuration
+### streamableHTTP Mode
 
-In HTTP mode, Vault configuration can be provided through multiple methods with different precedence:
+In streamableHTTP mode, configuration can be provided through multiple methods with different precedence:
 
-### Vault Address (VAULT_ADDR)
+#### Transport Host/Port
+Priority order:
+1. **Flags**: `--transport-host` or `--transport-port`
+2. **Environment Variables**: `TRANSPORT_HOST` or `TRANSPORT_PORT` env var
+
+#### Vault Address
 Priority order:
 1. **HTTP Headers**: `VAULT_ADDR` header
 2. **Query Parameters**: `?VAULT_ADDR=http://vault:8200`
 3. **Environment Variables**: `VAULT_ADDR` env var
 
-### Vault Token (VAULT_TOKEN)
+#### Vault Token
 Priority order (for security, query parameters are NOT supported):
 1. **HTTP Headers**: `VAULT_TOKEN` header
 2. **Environment Variables**: `VAULT_TOKEN` env var
 
-**Security Note**: Vault tokens are not extracted from query parameters to prevent them from being logged in web server access logs or appearing in browser history.
+### stdio Mode
 
-### Middleware Stack
+In stdio mode, Vault configuration can only be provided via environment variables
 
-The HTTP server includes a comprehensive middleware stack:
+## Usage with Visual Studio Code
 
-- **CORS Middleware**: Enables cross-origin requests with appropriate headers
-- **Vault Context Middleware**: Extracts Vault configuration and adds to request context
-- **Logging Middleware**: Structured HTTP request logging
+Add the following JSON block to your User Settings (JSON) file in VS Code. You can do this by pressing `Ctrl + Shift + P` and typing `Preferences: Open User Settings (JSON)`. 
 
-## Integration with Visual Studio Code
+More about using MCP server tools in VS Code's [agent mode documentation](https://code.visualstudio.com/docs/copilot/chat/mcp-servers).
 
-1. Open or create your Visual Studio Code configuration file:
 
-    ```bash
-    # On macOS
-    code ~/Library/Application\ Support/Code/User/settings.json
-    ```
-
-2. Add the Vault MCP server configuration in the mcp section:
-
-    ```json
+```json
+{
     "mcp": {
-         "inputs": [
-             {
-                 "type": "promptString",
-                 "id": "vault-token",
-                 "description": "Vault Token",
-                 "password": true
-             }
-         ],
-         "servers": {
-             "MCP Server Vault": {
-                 "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
-                 "headers": {
-                     "VAULT_TOKEN" : "${input:vault-token}"
-                 }
-             }
-         }
-     }
-    ```
+       "inputs": [
+            {
+                "type": "promptString",
+                "id": "vault-token",
+                "description": "Vault Token",
+                "password": true
+            }
+        ],
+        "servers": {
+            "MCP Server Vault": {
+                "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
+                "headers": {
+                    "VAULT_TOKEN" : "${input:vault-token}"
+                }
+            }
+        }
+    }
+}
+```
 
-    **Note**: The VAULT_ADDR is passed via query parameter for convenience, while the VAULT_TOKEN is securely passed via HTTP header to prevent it from being logged.
+Restart Visual Studio Code (or start server in settings.json. Optionally, you can add a similar example (i.e. without the mcp key) to a file called `.vscode/mcp.json` in your workspace. This will allow you to share the configuration with others.
 
-3. Restart Visual Studio Code (or start server in settings.json)
+**Note: Visual Studio Code will prompt you for the VAULT_TOKEN once and store it securely in the client.**
 
-**Note: Visual Studio Code will prompt you for the VAULT_TOKEN once and store
-it securely in the client.**
+## ## Building the Docker Image locally
 
-## Working with Docker
-
-Build the docker image:
+Before using the server, you need to build the Docker image locally
 
 ```bash
+git clone https://github.com/hashicorp/vault-mcp-server.git
+cd vault-mcp-server
 make docker-build
 ```
 
-Run the Vault container and get the root token:
+Create a shared Docker network
 
 ```bash
 docker network create mcp
-docker run --cap-add=IPC_LOCK --name=vault-dev --network=mcp -p 8200:8200 hashicorp/vault server -dev
-docker logs vault-dev
 ```
 
-Run the Vault MCP server:
+Run the Vault container, get the root token and connect with the MCP server:
 
 ```bash
-docker run --network=mcp -p 8080:8080 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' -e TRANSPORT_MODE='http' vault-mcp-server:dev
+# Run Vault in dev mode
+docker run --cap-add=IPC_LOCK --name=vault-dev --network=mcp -p 8200:8200 hashicorp/vault server -dev
+
+# Extract the Vault root token
+export VAULT_TOKEN=$(docker logs vault-dev 2>&1 | grep 'Root Token:' | awk '{print $NF}')
+
+# Run the Vault MCP server
+docker run --network=mcp -p 8080:8080 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN=\$VAULT_TOKEN -e TRANSPORT_MODE='http' vault-mcp-server:dev
 ```
 
-## Available Tools
+## Available Toolsets
 
-### create-mount
-
-Creates a new mount in Vault.
-
-- `type`: The type of mount (e.g., 'kv', 'kv2')
-- `path`: The path where the mount will be created
-- `description`: (Optional) Description for the mount
-
-### list-mounts
-
-Lists all mounts in Vault.
-
-- No parameters required
-
-### delete-mount
-
-Delete a mount in Vault.
-
-- `path`: The path to the mount to be deleted
-
-### list-secrets
-
-Lists secrets in a KV mount under a specific path in Vault.
-
-- `mount`: The mount path of the secret engine
-- `path`: (Optional) The path to list secrets from (defaults to root)
-
-### write-secret
-
-Writes a secret to a KV mount in Vault.
-
-- `mount`: The mount path of the secret engine
-- `path`: The full path to write the secret to
-- `key`: The key name for the secret
-- `value`: The value to store
-
-### read-secret
-
-Reads a secret from a KV mount in Vault.
-
-- `mount`: The mount path of the secret engine
-- `path`: The full path to read the secret from
+| Tool Name      | Description                                 | Parameters                                                                                  |
+|----------------|---------------------------------------------|---------------------------------------------------------------------------------------------|
+| createMount    | Creates a new mount in Vault                | `type` (mount type, e.g., `kv`, `kv2`), `path` (mount path), `description` (optional)       |
+| deleteMount    | Deletes a mount in Vault                    | `path` (mount path to delete)                                                               |
+| listMounts     | Lists all mounts in Vault                   | _None_                                                                                      |
+| listSecrets    | Lists secrets in a KV mount under a path    | `mount` (mount path), `path` (optional, defaults to root)                                   |
+| readSecret     | Reads a secret from a KV mount in Vault     | `mount` (mount path), `path` (secret path)                                                  |
+| writeSecret    | Writes a secret to a KV mount in Vault      | `mount` (mount path), `path` (secret path), `key` (secret key), `value` (secret value)      |
 
 ## Command Line Usage
 
@@ -199,27 +168,22 @@ Reads a secret from a KV mount in Vault.
 # Show help
 ./vault-mcp-server --help
 
+# Run with custom log file
+./vault-mcp-server --log-file /path/to/logfile.log
+
 # Run in stdio mode (default)
 ./vault-mcp-server
 ./vault-mcp-server stdio
 
 # Run in HTTP mode
 ./vault-mcp-server http --port 8080 --host 0.0.0.0
-
-# Show version
-./vault-mcp-server --version
-
-# Run with custom log file
-./vault-mcp-server --log-file /path/to/logfile.log
 ```
 
 ## Using the MCP Inspector
 
-You can use
-the [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector)
-tool to inspect and interact with your running Vault MCP server via a web UI.
+You can use the [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector) tool to inspect and interact with your running Vault MCP server via a web UI.
 
-For HTTP mode:
+For streamableHTTP mode:
 ```bash
 npx @modelcontextprotocol/inspector http://localhost:8080/mcp
 ```
@@ -231,43 +195,44 @@ npx @modelcontextprotocol/inspector ./vault-mcp-server
 
 ## Development
 
-### Building
+### Prerequisites
 
-```bash
-# Build the binary
-make build
+* Go (check go.mod file for specific version)
+* Docker (optional, for container builds)
 
-# Build with Docker
-make docker-build
+### Available Make Commands
 
-# Clean build artifacts
-make clean
-```
+| Command                         | Description                        |
+|---------------------------------|------------------------------------|
+| `make build`                    | Build the binary                   |
+| `make test`                     | Run all tests                      |
+| `make test-e2e`                 | Run end-to-end tests               |
+| `make docker-build`             | Build Docker image                 |
+| `make run-http`                 | Run HTTP server locally            |
+| `make docker-run-http`          | Run HTTP server in Docker          |
+| `make test-http`                | Test HTTP health endpoint          |
+| `make clean`                    | Remove build artifacts             |
+| `make cleanup-test-containers`  | Stop and remove all test containers|
+| `make help`                     | Show all available commands        |
 
-### Testing
+## Contributing
 
-```bash
-# Run tests
-make test
+1. Fork the repository
+2. Create your feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
 
-# Run end-to-end tests
-make test-e2e
+## License
 
-# Test HTTP endpoint
-make test-http
-```
+This project is licensed under the terms of the MPL-2.0 open source license. Please refer to [LICENSE](./LICENSE) file for the full terms.
 
-### Project Structure
+## Security
 
-```
-vault-mcp-server/
-├── cmd/vault-mcp-server/          # Main application entry point
-├── pkg/hashicorp/vault/           # Core vault functionality
-│   ├── client.go                  # Vault client management
-│   ├── middleware.go              # HTTP middleware stack
-│   ├── tools.go                   # Tool registration
-│   └── *_test.go                  # Unit tests
-├── version/                       # Version management
-├── e2e/                          # End-to-end tests
-└── resources/                     # Resource definitions
-```
+For security issues, please contact security@hashicorp.com or follow our [security policy](https://www.hashicorp.com/en/trust/security/vulnerability-management).
+
+## Support
+
+For bug reports and feature requests, please open an issue on GitHub.
+
+For general questions and discussions, open a GitHub Discussion.

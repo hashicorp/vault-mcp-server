@@ -36,7 +36,7 @@ func initConfig() {
 func initLogger(outPath string) (*log.Logger, error) {
 	logger := log.New()
 	logger.SetLevel(log.DebugLevel)
-	
+
 	if outPath == "" {
 		return logger, nil
 	}
@@ -50,8 +50,8 @@ func initLogger(outPath string) (*log.Logger, error) {
 	return logger, nil
 }
 
-func serverInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger) error {
-	stdioServer := server.NewStdioServer(hcServer)
+func serverInit(ctx context.Context, mcpServer *server.MCPServer, logger *log.Logger) error {
+	stdioServer := server.NewStdioServer(mcpServer)
 	stdLogger := stdlog.New(logger.Writer(), "stdioserver", 0)
 	stdioServer.SetErrorLogger(stdLogger)
 

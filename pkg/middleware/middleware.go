@@ -1,11 +1,13 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package middleware
 
 import (
 	"context"
 	"net/http"
+
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -20,21 +22,21 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 			ctx := r.Context()
 
 			// Handle VAULT_ADDR - can come from headers, query params, or env vars
-			vaultAddr := r.Header.Get(VaultAddressHeader)
+			vaultAddr := r.Header.Get(vault.VaultAddressHeader)
 			if vaultAddr == "" {
-				vaultAddr = r.URL.Query().Get(VaultAddressHeader)
+				vaultAddr = r.URL.Query().Get(vault.VaultAddressHeader)
 			}
 			if vaultAddr == "" {
-				vaultAddr = getEnv(VaultAddressHeader, "")
+				vaultAddr = vault.GetEnv(vault.VaultAddressHeader, "")
 			}
-			ctx = context.WithValue(ctx, contextKey(VaultAddressHeader), vaultAddr)
+			ctx = context.WithValue(ctx, vault.ContextKey(vault.VaultAddressHeader), vaultAddr)
 
 			// Handle VAULT_TOKEN - can only come from headers or env vars (NOT query params for security)
-			vaultToken := r.Header.Get(VaultTokenHeader)
+			vaultToken := r.Header.Get(vault.VaultTokenHeader)
 			if vaultToken == "" {
-				vaultToken = getEnv(VaultTokenHeader, "")
+				vaultToken = vault.GetEnv(vault.VaultTokenHeader, "")
 			}
-			ctx = context.WithValue(ctx, contextKey(VaultTokenHeader), vaultToken)
+			ctx = context.WithValue(ctx, vault.ContextKey(vault.VaultTokenHeader), vaultToken)
 
 			// Log the source of the configuration (without exposing sensitive values)
 			if vaultToken != "" {

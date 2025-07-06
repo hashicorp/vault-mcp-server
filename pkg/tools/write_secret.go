@@ -1,22 +1,23 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// WriteSecret creates a tool for writing secrets to a Vault KV mount
-func WriteSecret(logger *log.Logger) server.ServerTool {
+// writeSecret creates a tool for writing secrets to a Vault KV mount
+func writeSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("write-secret",
+		Tool: mcp.NewTool("writeSecret",
 			mcp.WithDescription("Write a secret to a KV mount in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to write the secret to")),
@@ -30,7 +31,7 @@ func WriteSecret(logger *log.Logger) server.ServerTool {
 }
 
 func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling write-secret request")
+	logger.Debug("Handling writeSecret request")
 
 	// Extract parameters
 	var mount, path, key, value string
@@ -66,7 +67,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Writing secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

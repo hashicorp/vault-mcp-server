@@ -1,13 +1,14 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
@@ -21,10 +22,10 @@ type Mount struct {
 	MaxLeaseTTL     int    `json:"max_lease_ttl"`     // Max lease TTL for the mount, if any
 }
 
-// ListMounts creates a tool for listing Vault mounts
-func ListMounts(logger *log.Logger) server.ServerTool {
+// listMounts creates a tool for listing Vault mounts
+func listMounts(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("list-mounts",
+		Tool: mcp.NewTool("listMounts",
 			mcp.WithDescription("List the available mounted secrets engines on a Vault Server"),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -34,10 +35,10 @@ func ListMounts(logger *log.Logger) server.ServerTool {
 }
 
 func listMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling list-mounts request")
+	logger.Debug("Handling listMounts request")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

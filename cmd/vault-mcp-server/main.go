@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hashicorp/vault-mcp-server/pkg/hashicorp/vault"
+	"github.com/hashicorp/vault-mcp-server/pkg/middleware"
+	"github.com/hashicorp/vault-mcp-server/pkg/tools"
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/hashicorp/vault-mcp-server/version"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -84,16 +86,16 @@ func runHTTPServer(logger *log.Logger, host string, port string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
-	vault.InitTools(hcServer, logger)
+	mcpServer := NewServer(version.Version, logger)
+	tools.InitTools(mcpServer, logger)
 
-	return httpServerInit(ctx, hcServer, logger, host, port)
+	return httpServerInit(ctx, mcpServer, logger, host, port)
 }
 
-func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger, host string, port string) error {
+func httpServerInit(ctx context.Context, mcpServer *server.MCPServer, logger *log.Logger, host string, port string) error {
 	// Create StreamableHTTP server which implements the new streamable-http transport
 	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
-	streamableServer := server.NewStreamableHTTPServer(hcServer,
+	streamableServer := server.NewStreamableHTTPServer(mcpServer,
 		server.WithEndpointPath("/mcp"), // Default MCP endpoint path
 		server.WithLogger(logger),
 	)
@@ -112,9 +114,9 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	})
 
 	// Apply middleware stack
-	handler := vault.CORSMiddleware()(mux)
-	handler = vault.VaultContextMiddleware(logger)(handler)
-	handler = vault.LoggingMiddleware(logger)(handler)
+	handler := middleware.CORSMiddleware()(mux)
+	handler = middleware.VaultContextMiddleware(logger)(handler)
+	handler = middleware.LoggingMiddleware(logger)(handler)
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	httpServer := &http.Server{
@@ -153,10 +155,10 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
-	vault.InitTools(hcServer, logger)
+	mcpServer := NewServer(version.Version, logger)
+	tools.InitTools(mcpServer, logger)
 
-	return serverInit(ctx, hcServer, logger)
+	return serverInit(ctx, mcpServer, logger)
 }
 
 func NewServer(version string, logger *log.Logger, opts ...server.ServerOption) *server.MCPServer {

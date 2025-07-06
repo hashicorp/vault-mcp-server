@@ -24,9 +24,9 @@ func TestGetEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getEnv(tt.key, tt.fallback)
+			result := GetEnv(tt.key, tt.fallback)
 			if result != tt.expected {
-				t.Errorf("getEnv() = %v, want %v", result, tt.expected)
+				t.Errorf("GetEnv() = %v, want %v", result, tt.expected)
 			}
 		})
 	}

@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package tools
 
 import (
 	"context"
@@ -9,15 +9,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// ListSecrets creates a tool for listing secrets in a Vault KV mount
-func ListSecrets(logger *log.Logger) server.ServerTool {
+// listSecrets creates a tool for listing secrets in a Vault KV mount
+func listSecrets(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("list-secrets",
+		Tool: mcp.NewTool("listSecrets",
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine")),
 			mcp.WithString("path", mcp.Description("The path to list secrets from (defaults to root)")),
@@ -29,7 +30,7 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 }
 
 func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling list-secrets request")
+	logger.Debug("Handling listSecrets request")
 
 	// Extract parameters
 	var mount, path string
@@ -57,7 +58,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Listing secrets")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := vault.GetVaultClientFromContext(ctx)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
