@@ -64,11 +64,20 @@ The server can be configured using environment variables:
 
 ## HTTP Mode Configuration
 
-In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
+In HTTP mode, Vault configuration can be provided through multiple methods with different precedence:
 
-1. **HTTP Headers**: `VAULT_ADDR` and `VAULT_TOKEN` headers
-2. **Query Parameters**: `?VAULT_ADDR=...&VAULT_TOKEN=...`
-3. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
+### Vault Address (VAULT_ADDR)
+Priority order:
+1. **HTTP Headers**: `VAULT_ADDR` header
+2. **Query Parameters**: `?VAULT_ADDR=http://vault:8200`
+3. **Environment Variables**: `VAULT_ADDR` env var
+
+### Vault Token (VAULT_TOKEN)
+Priority order (for security, query parameters are NOT supported):
+1. **HTTP Headers**: `VAULT_TOKEN` header
+2. **Environment Variables**: `VAULT_TOKEN` env var
+
+**Security Note**: Vault tokens are not extracted from query parameters to prevent them from being logged in web server access logs or appearing in browser history.
 
 ### Middleware Stack
 
@@ -109,6 +118,8 @@ The HTTP server includes a comprehensive middleware stack:
          }
      }
     ```
+
+    **Note**: The VAULT_ADDR is passed via query parameter for convenience, while the VAULT_TOKEN is securely passed via HTTP header to prevent it from being logged.
 
 3. Restart Visual Studio Code (or start server in settings.json)
 

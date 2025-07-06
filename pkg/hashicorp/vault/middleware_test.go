@@ -25,26 +25,29 @@ func TestVaultContextMiddleware(t *testing.T) {
 		expectedToken  string
 	}{
 		{
-			name: "headers take precedence",
+			name: "headers take precedence for both addr and token",
 			headers: map[string]string{
 				"VAULT_ADDR":  "http://header-vault:8200",
 				"VAULT_TOKEN": "header-token",
 			},
 			queryParams: map[string]string{
 				"VAULT_ADDR":  "http://query-vault:8200",
-				"VAULT_TOKEN": "query-token",
+				"VAULT_TOKEN": "query-token", // This should be ignored
 			},
 			expectedAddr:  "http://header-vault:8200",
 			expectedToken: "header-token",
 		},
 		{
-			name: "query params when no headers",
+			name: "query params work for addr but not token",
 			queryParams: map[string]string{
 				"VAULT_ADDR":  "http://query-vault:8200",
-				"VAULT_TOKEN": "query-token",
+				"VAULT_TOKEN": "query-token", // This should be ignored
+			},
+			headers: map[string]string{
+				"VAULT_TOKEN": "header-token",
 			},
 			expectedAddr:  "http://query-vault:8200",
-			expectedToken: "query-token",
+			expectedToken: "header-token", // From header, not query
 		},
 		{
 			name: "environment variables as fallback",
@@ -54,6 +57,29 @@ func TestVaultContextMiddleware(t *testing.T) {
 			},
 			expectedAddr:  "http://env-vault:8200",
 			expectedToken: "env-token",
+		},
+		{
+			name: "token from query param is ignored, falls back to env",
+			queryParams: map[string]string{
+				"VAULT_ADDR":  "http://query-vault:8200",
+				"VAULT_TOKEN": "query-token", // This should be ignored
+			},
+			envVars: map[string]string{
+				"VAULT_TOKEN": "env-token",
+			},
+			expectedAddr:  "http://query-vault:8200",
+			expectedToken: "env-token", // From env, query param ignored
+		},
+		{
+			name: "addr from query param, token from header",
+			queryParams: map[string]string{
+				"VAULT_ADDR": "http://query-vault:8200",
+			},
+			headers: map[string]string{
+				"VAULT_TOKEN": "header-token",
+			},
+			expectedAddr:  "http://query-vault:8200",
+			expectedToken: "header-token",
 		},
 	}
 
@@ -157,6 +183,43 @@ func TestCORSMiddleware(t *testing.T) {
 			t.Errorf("Expected status 200 for OPTIONS request, got %d", rr.Code)
 		}
 	})
+}
+
+func TestVaultTokenQueryParamSecurity(t *testing.T) {
+	logger := log.New()
+	logger.SetOutput(os.Stdout)
+
+	// Create test handler that checks context values
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
+		token, ok := ctx.Value(contextKey(VaultTokenHeader)).(string)
+		if !ok {
+			token = ""
+		}
+
+		// Token should be empty since it was only provided via query param
+		if token != "" {
+			t.Errorf("Expected VAULT_TOKEN to be empty (query param should be ignored), got %s", token)
+		}
+
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with middleware
+	middleware := VaultContextMiddleware(logger)
+	handler := middleware(testHandler)
+
+	// Create request with VAULT_TOKEN only in query parameters
+	req := httptest.NewRequest("GET", "/test?VAULT_TOKEN=should-be-ignored", nil)
+
+	// Execute request
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
 }
 
 func TestLoggingMiddleware(t *testing.T) {

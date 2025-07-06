@@ -13,33 +13,35 @@ import (
 // VaultContextMiddleware adds Vault-related header values to the request context
 // This middleware extracts Vault configuration from HTTP headers, query parameters,
 // or environment variables and adds them to the request context for use by MCP tools
+// Note: VAULT_TOKEN is NOT extracted from query parameters for security reasons
 func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requiredHeaders := []string{VaultAddressHeader, VaultTokenHeader}
 			ctx := r.Context()
 
-			for _, header := range requiredHeaders {
-				// Priority order: HTTP header -> Query parameter -> Environment variable
-				headerValue := r.Header.Get(header)
+			// Handle VAULT_ADDR - can come from headers, query params, or env vars
+			vaultAddr := r.Header.Get(VaultAddressHeader)
+			if vaultAddr == "" {
+				vaultAddr = r.URL.Query().Get(VaultAddressHeader)
+			}
+			if vaultAddr == "" {
+				vaultAddr = getEnv(VaultAddressHeader, "")
+			}
+			ctx = context.WithValue(ctx, contextKey(VaultAddressHeader), vaultAddr)
 
-				if headerValue == "" {
-					headerValue = r.URL.Query().Get(header)
-				}
+			// Handle VAULT_TOKEN - can only come from headers or env vars (NOT query params for security)
+			vaultToken := r.Header.Get(VaultTokenHeader)
+			if vaultToken == "" {
+				vaultToken = getEnv(VaultTokenHeader, "")
+			}
+			ctx = context.WithValue(ctx, contextKey(VaultTokenHeader), vaultToken)
 
-				if headerValue == "" {
-					headerValue = getEnv(header, "")
-				}
-
-				// Add to context using the header name as key
-				ctx = context.WithValue(ctx, contextKey(header), headerValue)
-
-				// Log the source of the configuration (without exposing sensitive values)
-				if header == VaultTokenHeader && headerValue != "" {
-					logger.Debug("Vault token provided via request context")
-				} else if header == VaultAddressHeader && headerValue != "" {
-					logger.Debug("Vault address configured via request context")
-				}
+			// Log the source of the configuration (without exposing sensitive values)
+			if vaultToken != "" {
+				logger.Debug("Vault token provided via request context")
+			}
+			if vaultAddr != "" {
+				logger.WithField("vault_addr", vaultAddr).Debug("Vault address configured")
 			}
 
 			// Call the next handler with the enriched context
