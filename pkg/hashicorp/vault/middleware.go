@@ -5,7 +5,9 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/textproto"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -21,10 +23,17 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 
 			for _, header := range requiredHeaders {
 				// Priority order: HTTP header -> Query parameter -> Environment variable
-				headerValue := r.Header.Get(header)
+				headerValue := r.Header.Get(textproto.CanonicalMIMEHeaderKey(header))
 
 				if headerValue == "" {
 					headerValue = r.URL.Query().Get(header)
+
+					// Explicitly disallow VaultToken in query parameters for security reasons
+					if header == VaultToken && headerValue != "" {
+						logger.Info(fmt.Sprintf("Vault token was provided in query parameters by client %v, termiating request", r.RemoteAddr))
+						http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the vault_token header", http.StatusBadRequest)
+						return
+					}
 				}
 
 				if headerValue == "" {

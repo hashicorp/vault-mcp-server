@@ -17,12 +17,13 @@ func TestVaultContextMiddleware(t *testing.T) {
 	logger.SetOutput(os.Stdout)
 
 	tests := []struct {
-		name          string
-		headers       map[string]string
-		queryParams   map[string]string
-		envVars       map[string]string
-		expectedAddr  string
-		expectedToken string
+		name             string
+		headers          map[string]string
+		queryParams      map[string]string
+		envVars          map[string]string
+		expectedAddr     string
+		expectedToken    string
+		expectedResponse int
 	}{
 		{
 			name: "headers take precedence",
@@ -34,8 +35,9 @@ func TestVaultContextMiddleware(t *testing.T) {
 				"VAULT_ADDR":  "http://query-vault:8200",
 				"VAULT_TOKEN": "query-token",
 			},
-			expectedAddr:  "http://header-vault:8200",
-			expectedToken: "header-token",
+			expectedAddr:     "http://header-vault:8200",
+			expectedToken:    "header-token",
+			expectedResponse: 200,
 		},
 		{
 			name: "query params when no headers",
@@ -43,8 +45,9 @@ func TestVaultContextMiddleware(t *testing.T) {
 				"VAULT_ADDR":  "http://query-vault:8200",
 				"VAULT_TOKEN": "query-token",
 			},
-			expectedAddr:  "http://query-vault:8200",
-			expectedToken: "query-token",
+			expectedAddr:     "http://query-vault:8200",
+			expectedToken:    "query-token",
+			expectedResponse: 400,
 		},
 		{
 			name: "environment variables as fallback",
@@ -52,8 +55,9 @@ func TestVaultContextMiddleware(t *testing.T) {
 				"VAULT_ADDR":  "http://env-vault:8200",
 				"VAULT_TOKEN": "env-token",
 			},
-			expectedAddr:  "http://env-vault:8200",
-			expectedToken: "env-token",
+			expectedAddr:     "http://env-vault:8200",
+			expectedToken:    "env-token",
+			expectedResponse: 200,
 		},
 	}
 
@@ -113,8 +117,8 @@ func TestVaultContextMiddleware(t *testing.T) {
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
 
-			if rr.Code != http.StatusOK {
-				t.Errorf("Expected status 200, got %d", rr.Code)
+			if rr.Code != tt.expectedResponse {
+				t.Errorf("Expected status %v, got %d", tt.expectedResponse, rr.Code)
 			}
 		})
 	}

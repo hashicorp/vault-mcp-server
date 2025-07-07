@@ -16,7 +16,7 @@ import (
 // ListSecrets creates a tool for listing secrets in a Vault KV mount
 func ListSecrets(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("list-secrets",
+		Tool: mcp.NewTool("list_secrets",
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'.")),
 			mcp.WithString("path", mcp.DefaultString(""), mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
@@ -28,7 +28,7 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 }
 
 func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling list-secrets request")
+	logger.Debug("Handling list_secrets request")
 
 	// Extract parameters
 	var mount, path string
@@ -70,12 +70,18 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
 
-	if m, ok := mounts[mount+"/"]; ok && m.Options["version"] == "2" {
-		if path == "" {
-			fullPath = fmt.Sprintf("%s/metadata/", strings.TrimSuffix(mount, "/"))
-		} else {
-			fullPath = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	// Check if the mount exists
+	if m, ok := mounts[mount+"/"]; ok {
+		// is it a KV v2 mount?
+		if m.Options["version"] == "2" {
+			if path == "" {
+				fullPath = fmt.Sprintf("%s/metadata/", strings.TrimSuffix(mount, "/"))
+			} else {
+				fullPath = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+			}
 		}
+	} else {
+		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
 	}
 
 	// List secrets

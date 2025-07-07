@@ -16,8 +16,8 @@ import (
 // WriteSecret creates a tool for writing secrets to a Vault KV mount
 func WriteSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("write-secret",
-			mcp.WithDescription("Write a secret to a KV mount in Vault using the specified path and mount. Supports both KV v1 and v2 mounts. If a KV v2 mount is detected, the currently stored version of the secret will be returned."),
+		Tool: mcp.NewTool("write_secret",
+			mcp.WithDescription("Writes a secret value to a KV store in Vault using the specified path and mount. Supports both KV v1 and v2 mounts. If a KV v2 mount is detected, the currently stored version of the secret will be returned."),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to write to 'secrets/application/credentials', this should be 'secrets'.")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to write the secret to without the mount prefix. For example, if you want to write to 'secrets/application/credentials', this should be 'application/credentials'.")),
 			mcp.WithString("key", mcp.Required(), mcp.Description("The key name for the secret. For example if you want to write mysecret=myvalue, this should be 'mysecret'")),
@@ -30,7 +30,7 @@ func WriteSecret(logger *log.Logger) server.ServerTool {
 }
 
 func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling write-secret request")
+	logger.Debug("Handling write_secret request")
 
 	// Extract parameters
 	var mount, path, key, value string
@@ -82,28 +82,45 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 
 	isV2 := false
 
-	// Check if the mount is a KV v2 mount
-	if m, ok := mounts[mount+"/"]; ok && m.Options["version"] == "2" {
-		isV2 = true
-		// Construct the full path for reading (KV v2 format)
-		fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	// Check if the mount exists
+	if m, ok := mounts[mount+"/"]; ok {
+		// is it a KV v2 mount?
+		if m.Options["version"] == "2" {
+			isV2 = true
+			// Construct the full path for reading (KV v2 format)
+			fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+		}
+	} else {
+		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
+	}
+
+	// Read the current secret so we can update it with the new key-value pair (or replace it)
+	currentSecret, err := client.Logical().Read(fullPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to read secret: %v", err)), nil
 	}
 
 	var secretData map[string]interface{}
 
-	if isV2 {
-		secretData = map[string]interface{}{
-			"data": map[string]interface{}{
-				key: value,
-			},
-		}
-	} else {
-		secretData = map[string]interface{}{
-			key: value,
-		}
+	if currentSecret != nil {
+		secretData = currentSecret.Data
 	}
 
-	// Write the secret
+	if isV2 {
+		if secretData == nil {
+			secretData = map[string]interface{}{
+				"data": make(map[string]interface{}),
+			}
+		}
+		secretData["data"].(map[string]interface{})[key] = value
+	} else {
+		if secretData == nil {
+			secretData = map[string]interface{}{}
+		}
+		secretData[key] = value
+	}
+
+	// Write (or update) the secret
 	versionInfo, err := client.Logical().Write(fullPath, secretData)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
@@ -115,11 +132,11 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to write secret: %v", err)), nil
 	}
 
-	successMsg := fmt.Sprintf("Successfully wrote secret '%s' to path '%s' in mount '%s'", key, path, mount)
+	successMsg := fmt.Sprintf("Successfully updated the secret, adding or updating the key '%s' on path '%s' in mount '%s'", key, path, mount)
 
 	// Write out the version information if available as the AI may decide on a different approach if a version is provided
 	if versionInfo != nil && versionInfo.Data != nil {
-		successMsg = fmt.Sprintf("Successfully wrote version %v of secret '%s' to path '%s' in mount '%s'", versionInfo.Data["version"], key, path, mount)
+		successMsg = fmt.Sprintf("Successfully wrote version %v of the secret to path '%s' in mount '%s' with key '%s'", versionInfo.Data["version"], path, mount, key)
 	}
 
 	logger.WithFields(log.Fields{

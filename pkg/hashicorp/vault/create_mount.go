@@ -6,7 +6,6 @@ package vault
 import (
 	"context"
 	"fmt"
-
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -16,7 +15,7 @@ import (
 // CreateMount creates a tool for creating Vault mounts
 func CreateMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("create-mount",
+		Tool: mcp.NewTool("create_mount",
 			mcp.WithDescription("Create a new mount in Vault"),
 			mcp.WithString("type", mcp.Required(), mcp.Enum("kv", "kv2"), mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store.")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created. Examples would be 'secrets' or 'kv'.")),
@@ -30,7 +29,7 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 }
 
 func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling create-mount request")
+	logger.Debug("Handling create_mount request")
 
 	// Extract parameters
 	var mountType, path, description string
@@ -68,6 +67,19 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	mounts, err := client.Sys().ListMounts()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
+	}
+
+	// Check if the mount exists
+	if _, ok := mounts[path+"/"]; ok {
+		// Let the model know that the mount already exists and ift could delete it, need be.
+		// We should not delete it automatically, as it could lead to data loss and we should return more options in the future to allow
+		// the model to decide what to do with the existing mount (such as tuning).
+		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' already exist, you should use 'delete_mount' if you want to to re-create it.", path)), nil
 	}
 
 	// Prepare mount input

@@ -16,7 +16,7 @@ import (
 // ReadSecret creates a tool for reading secrets from a Vault KV mount
 func ReadSecret(logger *log.Logger) server.ServerTool {
     return server.ServerTool{
-        Tool: mcp.NewTool("read-secret",
+        Tool: mcp.NewTool("read_secret",
             mcp.WithDescription("Read a secret from a KV mount in Vault"),
             mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to read from 'secrets/application/credentials', this should be 'secrets'.")),
             mcp.WithString("path", mcp.Required(), mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'.")),
@@ -28,7 +28,7 @@ func ReadSecret(logger *log.Logger) server.ServerTool {
 }
 
 func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-    logger.Debug("Handling read-secret request")
+    logger.Debug("Handling read_secret request")
 
     // Extract parameters
     var mount, path string
@@ -71,11 +71,16 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 
     isV2 := false
 
-    // Check if the mount is a KV v2 mount
-    if m, ok := mounts[mount+"/"]; ok && m.Options["version"] == "2" {
-        isV2 = true
-        // Construct the full path for reading (KV v2 format)
-        fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+    // Check if the mount exists
+    if m, ok := mounts[mount+"/"]; ok {
+        // is it a KV v2 mount?
+        if m.Options["version"] == "2" {
+            isV2 = true
+            // Construct the full path for reading (KV v2 format)
+            fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+        }
+    } else {
+        return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
     }
 
     // Read the secret
@@ -94,13 +99,22 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
             "mount": mount,
             "path":  path,
         }).Debug("Secret not found")
-        return mcp.NewToolResultError(fmt.Sprintf("Secret not found at path '%s' in mount '%s'", path, mount)), nil
+        return mcp.NewToolResultError(fmt.Sprintf("Secret not found at path '%s' in mount '%s'. Use 'write_secret' to write a new secret at that path.", path, mount)), nil
     }
 
     // Handle the data structure differently for v1 and v2
     var secretData interface{}
 
     if isV2 {
+        if secret.Data["data"] == nil {
+            metaData, ok := secret.Data["metadata"].(map[string]interface{})
+            if !ok {
+                return mcp.NewToolResultError(fmt.Sprintf("unexpected secret metadata format for v2 API")), nil
+            }
+            if metaData["deletion_time"] != nil {
+                return mcp.NewToolResultError(fmt.Sprintf("Secret at path '%s' in mount '%s' is deleted and cannot be read.", path, mount)), nil
+            }
+        }
         // V2 API structure: secret.Data["data"] contains the actual key-value pairs
         data, ok := secret.Data["data"].(map[string]interface{})
         if !ok {
