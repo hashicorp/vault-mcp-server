@@ -7,11 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
-
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 // ListSecrets creates a tool for listing secrets in a Vault KV mount
@@ -19,8 +18,8 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("list-secrets",
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
-			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine")),
-			mcp.WithString("path", mcp.Description("The path to list secrets from (defaults to root)")),
+			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'.")),
+			mcp.WithString("path", mcp.DefaultString(""), mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return listSecretsHandler(ctx, req, logger)
@@ -57,18 +56,26 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Listing secrets")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
 	// Construct the full path for listing
-	var fullPath string
-	if path == "" {
-		fullPath = fmt.Sprintf("%s/metadata/", strings.TrimSuffix(mount, "/"))
-	} else {
-		fullPath = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	fullPath := fmt.Sprintf(mount+"/%s", path)
+
+	mounts, err := client.Sys().ListMounts()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
+	}
+
+	if m, ok := mounts[mount+"/"]; ok && m.Options["version"] == "2" {
+		if path == "" {
+			fullPath = fmt.Sprintf("%s/metadata/", strings.TrimSuffix(mount, "/"))
+		} else {
+			fullPath = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+		}
 	}
 
 	// List secrets

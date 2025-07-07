@@ -17,7 +17,7 @@ func DeleteMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("delete-mount",
 			mcp.WithDescription("Delete a mount in Vault"),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The path to the mount to be deleted")),
+			mcp.WithString("path", mcp.Required(), mcp.Description("The path where of mount to be deleted. Examples would be 'secrets' or 'kv'.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return deleteMountHandler(ctx, req, logger)
@@ -46,7 +46,7 @@ func deleteMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.WithField("path", path).Debug("Deleting mount")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx)
+	client, err := GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

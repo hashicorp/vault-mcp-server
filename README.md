@@ -47,7 +47,7 @@ and other MCP clients.
 
     **HTTP mode:**
     ```bash
-    ./vault-mcp-server http --port 8080
+    ./vault-mcp-server http --transport-port 8080
     # or using make
     make run-http
     ```
@@ -59,7 +59,7 @@ The server can be configured using environment variables:
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
 - `VAULT_TOKEN`: Vault authentication token (required)
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
-- `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `0.0.0.0`)
+- `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
 
 ## HTTP Mode Configuration
@@ -193,7 +193,7 @@ Reads a secret from a KV mount in Vault.
 ./vault-mcp-server stdio
 
 # Run in HTTP mode
-./vault-mcp-server http --port 8080 --host 0.0.0.0
+./vault-mcp-server http --transport-port 8080 --transport-host 127.0.0.1
 
 # Show version
 ./vault-mcp-server --version
