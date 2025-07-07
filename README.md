@@ -13,6 +13,7 @@ and other MCP clients.
 - Write secrets to KV mounts
 - Read secrets from KV mounts
 - List all secrets under a path
+- Delete a complete secret or a key of a secret 
 - Comprehensive HTTP middleware stack (CORS, logging, Vault context)
 - Session-based Vault client management
 - Structured logging with configurable output
@@ -165,6 +166,14 @@ Lists secrets in a KV mount under a specific path in Vault.
 
 - `mount`: The mount path of the secret engine
 - `path`: (Optional) The path to list secrets from (defaults to root)
+
+### delete_secret
+
+Delete secrets (or keys) in a KV mount under a specific path in Vault.
+
+- `mount`: The mount path of the secret engine
+- `path`: The path to the secret to delete
+- `key`: (Optional) The key name to delete from the secret (defaults to deleting the entire secret)
 
 ### write_secret
 
