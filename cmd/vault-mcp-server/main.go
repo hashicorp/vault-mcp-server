@@ -133,7 +133,7 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 30 * time.Second,
 		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		IdleTimeout:       60 * time.Minute, // Keep connections alive for 60 minutes
 	}
 
 	// Start server in goroutine

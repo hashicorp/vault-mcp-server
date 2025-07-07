@@ -13,6 +13,7 @@ and other MCP clients.
 - Write secrets to KV mounts
 - Read secrets from KV mounts
 - List all secrets under a path
+- Delete a complete secret or a key of a secret 
 - Comprehensive HTTP middleware stack (CORS, logging, Vault context)
 - Session-based Vault client management
 - Structured logging with configurable output
@@ -139,7 +140,7 @@ docker run --network=mcp -p 8080:8080 -e VAULT_ADDR='http://vault-dev:8200' -e V
 
 ## Available Tools
 
-### create-mount
+### create_mount
 
 Creates a new mount in Vault.
 
@@ -147,26 +148,34 @@ Creates a new mount in Vault.
 - `path`: The path where the mount will be created
 - `description`: (Optional) Description for the mount
 
-### list-mounts
+### list_mounts
 
 Lists all mounts in Vault.
 
 - No parameters required
 
-### delete-mount
+### delete_mount
 
 Delete a mount in Vault.
 
 - `path`: The path to the mount to be deleted
 
-### list-secrets
+### list_secrets
 
 Lists secrets in a KV mount under a specific path in Vault.
 
 - `mount`: The mount path of the secret engine
 - `path`: (Optional) The path to list secrets from (defaults to root)
 
-### write-secret
+### delete_secret
+
+Delete secrets (or keys) in a KV mount under a specific path in Vault.
+
+- `mount`: The mount path of the secret engine
+- `path`: The path to the secret to delete
+- `key`: (Optional) The key name to delete from the secret (defaults to deleting the entire secret)
+
+### write_secret
 
 Writes a secret to a KV mount in Vault.
 
@@ -175,7 +184,7 @@ Writes a secret to a KV mount in Vault.
 - `key`: The key name for the secret
 - `value`: The value to store
 
-### read-secret
+### read_secret
 
 Reads a secret from a KV mount in Vault.
 

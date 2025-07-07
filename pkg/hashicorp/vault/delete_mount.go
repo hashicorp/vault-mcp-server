@@ -15,8 +15,8 @@ import (
 // DeleteMount creates a tool for deleting Vault mounts
 func DeleteMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("delete-mount",
-			mcp.WithDescription("Delete a mount in Vault"),
+		Tool: mcp.NewTool("delete_mount",
+			mcp.WithDescription("Delete a mounted secret engine in Vault. Use with extreme caution as this will remove all data under the mount path!"),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path where of mount to be deleted. Examples would be 'secrets' or 'kv'.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -26,7 +26,7 @@ func DeleteMount(logger *log.Logger) server.ServerTool {
 }
 
 func deleteMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling delete-mount request")
+	logger.Debug("Handling delete_mount request")
 
 	// Extract parameters
 	var path string

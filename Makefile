@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash -euo pipefail -c
 
-BINARY_NAME ?= vault-mcp-server
+BINARY_NAME ?= ./bin/vault-mcp-server
 VERSION ?= $(if $(shell printenv VERSION),$(shell printenv VERSION),dev)
 
 GO=go
