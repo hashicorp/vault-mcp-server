@@ -15,27 +15,27 @@ import (
 
 // AuthMethod represents an authentication method in Vault
 type AuthMethod struct {
-	Name                string            `json:"name"`
-	Type                string            `json:"type"`
-	Description         string            `json:"description"`
-	Accessor            string            `json:"accessor"`
-	Local               bool              `json:"local"`
-	SealWrap            bool              `json:"seal_wrap"`
-	ExternalEntropyAccess bool            `json:"external_entropy_access"`
-	Config              *AuthMethodConfig `json:"config"`
-	Options             map[string]string `json:"options"`
-	UUID                string            `json:"uuid"`
-	PluginVersion       string            `json:"plugin_version"`
-	RunningSha256       string            `json:"running_sha256"`
-	DeprecationStatus   string            `json:"deprecation_status"`
+	Name                  string            `json:"name"`
+	Type                  string            `json:"type"`
+	Description           string            `json:"description"`
+	Accessor              string            `json:"accessor"`
+	Local                 bool              `json:"local"`
+	SealWrap              bool              `json:"seal_wrap"`
+	ExternalEntropyAccess bool              `json:"external_entropy_access"`
+	Config                *AuthMethodConfig `json:"config"`
+	Options               map[string]string `json:"options"`
+	UUID                  string            `json:"uuid"`
+	PluginVersion         string            `json:"plugin_version"`
+	RunningSha256         string            `json:"running_sha256"`
+	DeprecationStatus     string            `json:"deprecation_status"`
 }
 
 // AuthMethodConfig represents the configuration of an auth method
 type AuthMethodConfig struct {
-	DefaultLeaseTTL  int    `json:"default_lease_ttl"`
-	MaxLeaseTTL      int    `json:"max_lease_ttl"`
-	ForceNoCache     bool   `json:"force_no_cache"`
-	TokenType        string `json:"token_type"`
+	DefaultLeaseTTL int    `json:"default_lease_ttl"`
+	MaxLeaseTTL     int    `json:"max_lease_ttl"`
+	ForceNoCache    bool   `json:"force_no_cache"`
+	TokenType       string `json:"token_type"`
 }
 
 // ListAuthMethods creates a tool for listing all enabled authentication methods in Vault
