@@ -6,6 +6,7 @@ package vault
 import (
 	"context"
 	"fmt"
+
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
