@@ -7,16 +7,24 @@ and other MCP clients.
 
 ## Features
 
-- Create new mounts in Vault (KV v1, KV v2)
-- List all available mounts
-- Delete a mount
-- Write secrets to KV mounts
-- Read secrets from KV mounts
-- List all secrets under a path
-- Delete a complete secret or a key of a secret 
-- Comprehensive HTTP middleware stack (CORS, logging, Vault context)
-- Session-based Vault client management
-- Structured logging with configurable output
+- **Secret Engine Management**:
+  - Create new mounts in Vault (KV v1, KV v2)
+  - List all available mounts
+  - Delete a mount
+- **Secret Management**:
+  - Write secrets to KV mounts
+  - Read secrets from KV mounts
+  - List all secrets under a path
+  - Delete a complete secret or a key of a secret
+- **Authentication Method Management**:
+  - List all enabled authentication methods
+  - Enable new authentication methods (userpass, github, ldap, okta, aws, kubernetes, etc.)
+  - Disable authentication methods
+  - Read authentication method configuration
+- **System Features**:
+  - Comprehensive HTTP middleware stack (CORS, logging, Vault context)
+  - Session-based Vault client management
+  - Structured logging with configurable output
 
 ## Prerequisites
 - Go 1.24 or later (if building from source)
@@ -190,6 +198,36 @@ Reads a secret from a KV mount in Vault.
 
 - `mount`: The mount path of the secret engine
 - `path`: The full path to read the secret from
+
+### list_auth_methods
+
+Lists all enabled authentication methods in Vault.
+
+- No parameters required
+
+### enable_auth_method
+
+Enable a new authentication method in Vault.
+
+- `path`: The path where the auth method will be mounted (e.g., 'github', 'my-userpass')
+- `type`: The type of authentication method (e.g., 'userpass', 'github', 'ldap', 'okta', 'aws', 'kubernetes')
+- `description`: (Optional) Description for the auth method
+- `local`: (Optional) Whether the auth method is local only ('true' or 'false', defaults to 'false')
+- `seal_wrap`: (Optional) Enable seal wrapping ('true' or 'false', defaults to 'false')
+- `config`: (Optional) Configuration options (e.g., default_lease_ttl, max_lease_ttl, token_type)
+- `options`: (Optional) Auth method-specific options
+
+### disable_auth_method
+
+Disable an authentication method in Vault.
+
+- `path`: The path of the auth method to disable
+
+### read_auth_method
+
+Read the configuration of an authentication method in Vault.
+
+- `path`: The path of the auth method to read
 
 ## Command Line Usage
 

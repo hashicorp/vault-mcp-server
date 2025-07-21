@@ -29,4 +29,17 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 
 	deleteSecretTool := DeleteSecret(logger)
 	hcServer.AddTool(deleteSecretTool.Tool, deleteSecretTool.Handler)
+
+	// Authentication method tools
+	listAuthMethodsTool := ListAuthMethods(logger)
+	hcServer.AddTool(listAuthMethodsTool.Tool, listAuthMethodsTool.Handler)
+
+	enableAuthMethodTool := EnableAuthMethod(logger)
+	hcServer.AddTool(enableAuthMethodTool.Tool, enableAuthMethodTool.Handler)
+
+	disableAuthMethodTool := DisableAuthMethod(logger)
+	hcServer.AddTool(disableAuthMethodTool.Tool, disableAuthMethodTool.Handler)
+
+	readAuthMethodTool := ReadAuthMethod(logger)
+	hcServer.AddTool(readAuthMethodTool.Tool, readAuthMethodTool.Handler)
 }
