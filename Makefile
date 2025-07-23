@@ -25,6 +25,9 @@ OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
 build:
 	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/vault-mcp-server
 
+build-linux:
+	CGO_ENABLED=0 GOARCH=amd64 GOOS=linux $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/vault-mcp-server
+
 crt-build:
 	@mkdir -p $(TARGET_DIR)
 	@$(CURDIR)/scripts/crt-build.sh build
