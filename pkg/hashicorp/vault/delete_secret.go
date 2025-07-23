@@ -26,7 +26,7 @@ func DeleteSecret(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Delete a secret from a KV mount in Vault using the specified path and mount. If you specify a key, only that key will be deleted. If no key is specified or you delete the last key, the entire secret will be deleted."),
 			mcp.WithString("mount",
 				mcp.Required(),
-				mcp.Description("The mount path of the secret engine. For example, if you want to delete to 'secrets/application/credentials', this should be 'secrets'."),
+				mcp.Description("The mount path of the secret engine. For example, if you want to delete to 'secrets/application/credentials', this should be 'secrets' without the trailing slash."),
 			),
 			mcp.WithString("path",
 				mcp.Required(),
@@ -47,28 +47,25 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	logger.Debug("Handling delete_secret request")
 
 	// Extract parameters
-	var mount, path, key string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			if path, ok = args["path"].(string); !ok || path == "" {
-				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
-			}
+	path, ok := args["path"].(string)
+	if !ok || path == "" {
+		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
+	}
 
-			// Can be empty to delete the entire secret
-			if key, ok = args["key"].(string); !ok {
-				return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
-			}
-
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	// Can be empty to delete the entire secret
+	key, ok := args["key"].(string)
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -90,7 +87,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}
 
 	// Default to a v1 KV path
-	fullPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	fullPath := fmt.Sprintf("%s/%s", mount, strings.TrimPrefix(path, "/"))
 
 	isV2 := false
 
@@ -100,7 +97,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		if m.Options["version"] == "2" {
 			isV2 = true
 			// Construct the full path for reading (KV v2 format)
-			fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+			fullPath = fmt.Sprintf("%s/data/%s", mount, strings.TrimPrefix(path, "/"))
 		}
 	} else {
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil

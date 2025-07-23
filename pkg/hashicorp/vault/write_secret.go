@@ -26,7 +26,7 @@ func WriteSecret(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Writes a secret value to a KV store in Vault using the specified path and mount. Supports both KV v1 and v2 mounts. If a KV v2 mount is detected, the currently stored version of the secret will be returned."),
 			mcp.WithString("mount",
 				mcp.Required(),
-				mcp.Description("The mount path of the secret engine. For example, if you want to write to 'secrets/application/credentials', this should be 'secrets'."),
+				mcp.Description("The mount path of the secret engine. For example, if you want to write to 'secrets/application/credentials', this should be 'secrets' without the trailing slash."),
 			),
 			mcp.WithString("path",
 				mcp.Required(),
@@ -51,30 +51,29 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.Debug("Handling write_secret request")
 
 	// Extract parameters
-	var mount, path, key, value string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			if path, ok = args["path"].(string); !ok || path == "" {
-				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
-			}
+	path, ok := args["path"].(string)
+	if !ok || path == "" {
+		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
+	}
 
-			if key, ok = args["key"].(string); !ok || key == "" {
-				return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
-			}
+	key, ok := args["key"].(string)
+	if !ok || key == "" {
+		return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
+	}
 
-			if value, ok = args["value"].(string); !ok {
-				return mcp.NewToolResultError("Missing or invalid 'value' parameter"), nil
-			}
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	value, ok := args["value"].(string)
+	if !ok || value == "" {
+		return mcp.NewToolResultError("Missing or invalid 'value' parameter"), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -96,7 +95,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}
 
 	// Default to a v1 KV path
-	fullPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	fullPath := fmt.Sprintf("%s/%s", mount, strings.TrimPrefix(path, "/"))
 
 	isV2 := false
 
@@ -106,7 +105,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		if m.Options["version"] == "2" {
 			isV2 = true
 			// Construct the full path for reading (KV v2 format)
-			fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+			fullPath = fmt.Sprintf("%s/data/%s", mount, strings.TrimPrefix(path, "/"))
 		}
 	} else {
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil

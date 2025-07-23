@@ -7,10 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // ListSecrets creates a tool for listing secrets in a Vault KV mount
@@ -25,7 +26,7 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 			),
 			mcp.WithString("mount",
 				mcp.Required(),
-				mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'."),
+				mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets' without the trailing slash."),
 			),
 			mcp.WithString("path",
 				mcp.DefaultString(""),
@@ -41,23 +42,19 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.Debug("Handling list_secrets request")
 
 	// Extract parameters
-	var mount, path string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			path, _ = args["path"].(string)
-			if path == "" {
-				path = ""
-			}
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	path, _ := args["path"].(string)
+	if path == "" {
+		path = ""
 	}
 
 	logger.WithFields(log.Fields{
@@ -85,9 +82,9 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		// is it a KV v2 mount?
 		if m.Options["version"] == "2" {
 			if path == "" {
-				fullPath = fmt.Sprintf("%s/metadata/", strings.TrimSuffix(mount, "/"))
+				fullPath = fmt.Sprintf("%s/metadata/", mount)
 			} else {
-				fullPath = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+				fullPath = fmt.Sprintf("%s/metadata/%s", mount, strings.TrimPrefix(path, "/"))
 			}
 		}
 	} else {
