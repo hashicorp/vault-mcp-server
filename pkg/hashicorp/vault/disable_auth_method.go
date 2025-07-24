@@ -18,6 +18,7 @@ func DisableAuthMethod(logger *log.Logger) server.ServerTool {
 		Tool: mcp.NewTool("disable_auth_method",
 			mcp.WithDescription("Disable an authentication method in Vault. Use with caution as this will remove the auth method and all associated data!"),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path of the auth method to disable. For example, 'github' or 'my-userpass'.")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the auth method will be disabled.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return disableAuthMethodHandler(ctx, req, logger)

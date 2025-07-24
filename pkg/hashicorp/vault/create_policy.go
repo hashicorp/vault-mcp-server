@@ -19,6 +19,7 @@ func CreatePolicy(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Create or update an ACL policy in Vault"),
 			mcp.WithString("name", mcp.Required(), mcp.Description("The name of the policy to create or update")),
 			mcp.WithString("rules", mcp.Required(), mcp.Description("The policy rules in HCL format")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the policy will be created.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return createPolicyHandler(ctx, req, logger)
@@ -30,7 +31,7 @@ func createPolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	logger.Debug("Handling create_policy request")
 
 	// Extract parameters
-	var name, rules string
+	var name, rules, namespace string
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
@@ -41,6 +42,8 @@ func createPolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 			if rules, ok = args["rules"].(string); !ok || rules == "" {
 				return mcp.NewToolResultError("Missing or invalid 'rules' parameter"), nil
 			}
+
+			namespace, _ = args["namespace"].(string)
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -50,6 +53,7 @@ func createPolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 
 	logger.WithFields(log.Fields{
 		"policy_name": name,
+		"namespace":   namespace,
 	}).Debug("Creating/updating policy")
 
 	// Get Vault client from context
@@ -57,6 +61,12 @@ func createPolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	// Create/update the policy

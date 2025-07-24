@@ -7,10 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // ListSecrets creates a tool for listing secrets in a Vault KV mount
@@ -20,6 +21,7 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'.")),
 			mcp.WithString("path", mcp.DefaultString(""), mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the secrets will be listed.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return listSecretsHandler(ctx, req, logger)
@@ -31,7 +33,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.Debug("Handling list_secrets request")
 
 	// Extract parameters
-	var mount, path string
+	var mount, path, namespace string
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
@@ -43,6 +45,8 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 			if path == "" {
 				path = ""
 			}
+
+			namespace, _ = args["namespace"].(string)
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -51,8 +55,9 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}
 
 	logger.WithFields(log.Fields{
-		"mount": mount,
-		"path":  path,
+		"mount":     mount,
+		"path":      path,
+		"namespace": namespace,
 	}).Debug("Listing secrets")
 
 	// Get Vault client from context
@@ -60,6 +65,12 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	// Construct the full path for listing

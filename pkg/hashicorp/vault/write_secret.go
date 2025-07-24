@@ -22,6 +22,7 @@ func WriteSecret(logger *log.Logger) server.ServerTool {
 			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to write the secret to without the mount prefix. For example, if you want to write to 'secrets/application/credentials', this should be 'application/credentials'.")),
 			mcp.WithString("key", mcp.Required(), mcp.Description("The key name for the secret. For example if you want to write mysecret=myvalue, this should be 'mysecret'")),
 			mcp.WithString("value", mcp.Required(), mcp.Description("The value to store the given key. For example if you want to write mysecret=myvalue, this should be 'myvalue'")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the secret will be written.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return writeSecretHandler(ctx, req, logger)
@@ -33,7 +34,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.Debug("Handling write_secret request")
 
 	// Extract parameters
-	var mount, path, key, value string
+	var mount, path, key, value, namespace string
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
@@ -52,6 +53,8 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 			if value, ok = args["value"].(string); !ok {
 				return mcp.NewToolResultError("Missing or invalid 'value' parameter"), nil
 			}
+
+			namespace, _ = args["namespace"].(string)
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -60,9 +63,10 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}
 
 	logger.WithFields(log.Fields{
-		"mount": mount,
-		"path":  path,
-		"key":   key,
+		"mount":     mount,
+		"path":      path,
+		"key":       key,
+		"namespace": namespace,
 	}).Debug("Writing secret")
 
 	// Get Vault client from context
@@ -70,6 +74,12 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	mounts, err := client.Sys().ListMounts()

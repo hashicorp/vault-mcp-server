@@ -45,6 +45,10 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	readAuthMethodTool := ReadAuthMethod(logger)
 	hcServer.AddTool(readAuthMethodTool.Tool, readAuthMethodTool.Handler)
 
+	// Token management tools
+	generateTokenTool := GenerateToken(logger)
+	hcServer.AddTool(generateTokenTool.Tool, generateTokenTool.Handler)
+
 	// System health and status tools
 	getHealthStatusTool := GetHealthStatus(logger)
 	hcServer.AddTool(getHealthStatusTool.Tool, getHealthStatusTool.Handler)
@@ -65,6 +69,9 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	// Policy management tools
 	listPoliciesTool := ListPolicies(logger)
 	hcServer.AddTool(listPoliciesTool.Tool, listPoliciesTool.Handler)
+
+	getPolicyTool := GetPolicy(logger)
+	hcServer.AddTool(getPolicyTool.Tool, getPolicyTool.Handler)
 
 	createPolicyTool := CreatePolicy(logger)
 	hcServer.AddTool(createPolicyTool.Tool, createPolicyTool.Handler)
@@ -108,4 +115,9 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 
 	getCurrentTokenCapabilitiesTool := GetCurrentTokenCapabilities(logger)
 	hcServer.AddTool(getCurrentTokenCapabilitiesTool.Tool, getCurrentTokenCapabilitiesTool.Handler)
+
+	// URL parsing tools
+	parseVaultUIURLTool := ParseVaultUIURLTool(logger)
+	hcServer.AddTool(parseVaultUIURLTool.Tool, parseVaultUIURLTool.Handler)
+
 }

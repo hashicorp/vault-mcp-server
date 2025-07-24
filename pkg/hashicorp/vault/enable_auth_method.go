@@ -25,6 +25,7 @@ func EnableAuthMethod(logger *log.Logger) server.ServerTool {
 			mcp.WithString("seal_wrap", mcp.DefaultString("false"), mcp.Description("Enable seal wrapping for the mount. Set to 'true' or 'false'.")),
 			mcp.WithObject("config", mcp.Description("Configuration options for this auth method (e.g., default_lease_ttl, max_lease_ttl, token_type).")),
 			mcp.WithObject("options", mcp.Description("Auth method-specific options.")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the auth method will be enabled.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return enableAuthMethodHandler(ctx, req, logger)

@@ -18,6 +18,7 @@ func DeletePolicy(logger *log.Logger) server.ServerTool {
 		Tool: mcp.NewTool("delete_policy",
 			mcp.WithDescription("Delete an ACL policy from Vault"),
 			mcp.WithString("name", mcp.Required(), mcp.Description("The name of the policy to delete")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the policy will be deleted.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return deletePolicyHandler(ctx, req, logger)
@@ -29,13 +30,15 @@ func deletePolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	logger.Debug("Handling delete_policy request")
 
 	// Extract parameters
-	var name string
+	var name, namespace string
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
 			if name, ok = args["name"].(string); !ok || name == "" {
 				return mcp.NewToolResultError("Missing or invalid 'name' parameter"), nil
 			}
+
+			namespace, _ = args["namespace"].(string)
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -48,13 +51,22 @@ func deletePolicyHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		return mcp.NewToolResultError(fmt.Sprintf("Cannot delete system policy '%s'", name)), nil
 	}
 
-	logger.WithField("policy_name", name).Debug("Deleting policy")
+	logger.WithFields(log.Fields{
+		"policy_name": name,
+		"namespace":   namespace,
+	}).Debug("Deleting policy")
 
 	// Get Vault client from context
 	client, err := GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	// Delete the policy

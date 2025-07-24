@@ -21,6 +21,7 @@ func ReadSecret(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Read a secret from a KV mount in Vault"),
 			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to read from 'secrets/application/credentials', this should be 'secrets'.")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'.")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the secret will be read.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return readSecretHandler(ctx, req, logger)
@@ -32,7 +33,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	logger.Debug("Handling read_secret request")
 
 	// Extract parameters
-	var mount, path string
+	var mount, path, namespace string
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
@@ -43,6 +44,8 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 			if path, ok = args["path"].(string); !ok || path == "" {
 				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
 			}
+
+			namespace, _ = args["namespace"].(string)
 		} else {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
 		}
@@ -51,8 +54,9 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	}
 
 	logger.WithFields(log.Fields{
-		"mount": mount,
-		"path":  path,
+		"mount":     mount,
+		"path":      path,
+		"namespace": namespace,
 	}).Debug("Reading secret")
 
 	// Get Vault client from context
@@ -60,6 +64,12 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	mounts, err := client.Sys().ListMounts()

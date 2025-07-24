@@ -6,6 +6,7 @@ package vault
 import (
 	"context"
 	"fmt"
+
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,6 +20,7 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Create a new mount in Vault"),
 			mcp.WithString("type", mcp.Required(), mcp.Enum("kv", "kv2"), mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store.")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created. Examples would be 'secrets' or 'kv'.")),
+			mcp.WithString("namespace", mcp.Description("The namespace where the mount will be created.")),
 			mcp.WithString("description", mcp.DefaultString(""), mcp.Description("A description for the mount.")),
 			mcp.WithObject("options", mcp.Description("Optional mount options, specific to the mount type.")),
 		),
@@ -32,7 +34,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.Debug("Handling create_mount request")
 
 	// Extract parameters
-	var mountType, path, description string
+	var mountType, path, description, namespace string
 	var options interface{}
 
 	if req.Params.Arguments != nil {
@@ -43,6 +45,10 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 
 			if path, ok = args["path"].(string); !ok || path == "" {
 				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
+			}
+
+			if namespace, ok = args["namespace"].(string); !ok || namespace == "" {
+				return mcp.NewToolResultError("Missing or invalid 'namespace' parameter"), nil
 			}
 
 			description, _ = args["description"].(string)
@@ -59,6 +65,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.WithFields(log.Fields{
 		"type":        mountType,
 		"path":        path,
+		"namespace":   namespace,
 		"description": description,
 	}).Debug("Creating mount with parameters")
 
@@ -67,6 +74,12 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	mounts, err := client.Sys().ListMounts()
@@ -117,8 +130,9 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}
 
 	logger.WithFields(log.Fields{
-		"type": mountType,
-		"path": path,
+		"type":      mountType,
+		"path":      path,
+		"namespace": namespace,
 	}).Info("Successfully created mount")
 
 	return mcp.NewToolResultText(successMsg), nil

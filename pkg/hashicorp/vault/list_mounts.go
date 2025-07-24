@@ -26,6 +26,7 @@ func ListMounts(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("list_mounts",
 			mcp.WithDescription("List the available mounted secrets engines on a Vault Server."),
+			mcp.WithString("namespace", mcp.Description("The namespace where the mounts will be listed.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return listMountHandler(ctx, req, logger)
@@ -36,11 +37,27 @@ func ListMounts(logger *log.Logger) server.ServerTool {
 func listMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
 	logger.Debug("Handling list_mounts request")
 
+	// Extract namespace parameter
+	var namespace string
+	if req.Params.Arguments != nil {
+		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+			namespace, _ = args["namespace"].(string)
+		}
+	}
+
+	logger.WithField("namespace", namespace).Debug("Listing mounts")
+
 	// Get Vault client from context
 	client, err := GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
+	}
+
+	// Set the namespace on the client
+	if namespace != "" {
+		client = client.WithNamespace(namespace)
+		logger.WithField("namespace", namespace).Debug("Set namespace on Vault client")
 	}
 
 	// List mounts from Vault
