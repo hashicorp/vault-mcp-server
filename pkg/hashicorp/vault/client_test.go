@@ -39,7 +39,7 @@ func TestNewVaultClient(t *testing.T) {
 	vaultAddress := "http://127.0.0.1:8200"
 	vaultToken := "test-token"
 
-	client, err := NewVaultClient(sessionID, vaultAddress, vaultToken)
+	client, err := NewVaultClient(sessionID, vaultAddress, false, vaultToken)
 	if err != nil {
 		t.Logf("NewVaultClient() error = %v (expected in test environment)", err)
 	}

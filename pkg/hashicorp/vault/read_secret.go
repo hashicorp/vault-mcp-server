@@ -7,20 +7,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 // ReadSecret creates a tool for reading secrets from a Vault KV mount
 func ReadSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("read_secret",
-			mcp.WithDescription("Read a secret from a KV mount in Vault"),
-			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to read from 'secrets/application/credentials', this should be 'secrets'.")),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'.")),
+			mcp.WithDescription("Read a secret from a KV mount in at a specific path in Vault."),
+			mcp.WithString("mount",
+				mcp.Required(),
+				mcp.Description("The mount path of the secret engine. For example, if you want to read from 'secrets/application/credentials', this should be 'secrets'."),
+			),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return readSecretHandler(ctx, req, logger)

@@ -18,8 +18,18 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("list_secrets",
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
-			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'.")),
-			mcp.WithString("path", mcp.DefaultString(""), mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					ReadOnlyHint: ToBoolPtr(true),
+				},
+			),
+			mcp.WithString("mount",
+				mcp.Required(),
+				mcp.Description("The mount path of the secret engine. For example, if you want to list 'secrets/application/credentials', this should be 'secrets'."),
+			),
+			mcp.WithString("path",
+				mcp.DefaultString(""),
+				mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return listSecretsHandler(ctx, req, logger)

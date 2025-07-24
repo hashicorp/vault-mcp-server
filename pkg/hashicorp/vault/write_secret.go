@@ -17,11 +17,29 @@ import (
 func WriteSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("write_secret",
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					DestructiveHint: ToBoolPtr(true),  // This is destructive because it overwrites existing secrets on a kv1
+					IdempotentHint:  ToBoolPtr(false), // We are not idempotent because writing a secret will always create a new version on the kv2
+				},
+			),
 			mcp.WithDescription("Writes a secret value to a KV store in Vault using the specified path and mount. Supports both KV v1 and v2 mounts. If a KV v2 mount is detected, the currently stored version of the secret will be returned."),
-			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to write to 'secrets/application/credentials', this should be 'secrets'.")),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to write the secret to without the mount prefix. For example, if you want to write to 'secrets/application/credentials', this should be 'application/credentials'.")),
-			mcp.WithString("key", mcp.Required(), mcp.Description("The key name for the secret. For example if you want to write mysecret=myvalue, this should be 'mysecret'")),
-			mcp.WithString("value", mcp.Required(), mcp.Description("The value to store the given key. For example if you want to write mysecret=myvalue, this should be 'myvalue'")),
+			mcp.WithString("mount",
+				mcp.Required(),
+				mcp.Description("The mount path of the secret engine. For example, if you want to write to 'secrets/application/credentials', this should be 'secrets'."),
+			),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("The full path to write the secret to without the mount prefix. For example, if you want to write to 'secrets/application/credentials', this should be 'application/credentials'."),
+			),
+			mcp.WithString("key",
+				mcp.Required(),
+				mcp.Description("The key name for the secret. For example if you want to write mysecret=myvalue, this should be 'mysecret'"),
+			),
+			mcp.WithString("value",
+				mcp.Required(),
+				mcp.Description("The value to store the given key. For example if you want to write mysecret=myvalue, this should be 'myvalue'"),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return writeSecretHandler(ctx, req, logger)

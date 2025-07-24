@@ -5,8 +5,11 @@ package vault
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/hashicorp/vault/api"
@@ -19,8 +22,9 @@ var (
 )
 
 const (
-	VaultAddress = "VAULT_ADDR"
-	VaultToken   = "VAULT_TOKEN"
+	VaultAddress       = "VAULT_ADDR"
+	VaultToken         = "VAULT_TOKEN"
+	VaultSkipTLSVerify = "VAULT_SKIP_VERIFY"
 )
 
 const DefaultVaultAddress = "http://127.0.0.1:8200"
@@ -37,10 +41,15 @@ func getEnv(key, fallback string) string {
 }
 
 // NewVaultClient creates a new Vault client for the given session
-func NewVaultClient(sessionId string, vaultAddress string, vaultToken string) (*api.Client, error) {
+func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bool, vaultToken string) (*api.Client, error) {
 	// Initialize Vault client
 	config := api.DefaultConfig()
 	config.Address = vaultAddress
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: vaultSkipTLSVerify},
+	}
+	config.HttpClient = &http.Client{Transport: tr}
 
 	client, err := api.NewClient(config)
 	if err != nil {
@@ -105,7 +114,12 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		}
 	}
 
-	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultToken)
+	vaultSkipTLSVerify, err := strconv.ParseBool(ctx.Value(contextKey(VaultSkipTLSVerify)).(string))
+	if err != nil {
+		vaultSkipTLSVerify = false
+	}
+
+	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken)
 	if err != nil {
 		return nil, fmt.Errorf("NewVaultClient failed to create Vault client: %v", err)
 	}
