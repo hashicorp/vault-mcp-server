@@ -87,6 +87,9 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	getUIHeadersTool := GetUIHeaders(logger)
 	hcServer.AddTool(getUIHeadersTool.Tool, getUIHeadersTool.Handler)
 
+	configureUIHeadersTool := ConfigureUIHeaders(logger)
+	hcServer.AddTool(configureUIHeadersTool.Tool, configureUIHeadersTool.Handler)
+
 	// Security health analysis orchestration tool
 	analyzeSecurityHealthTool := AnalyzeSecurityHealth(logger)
 	hcServer.AddTool(analyzeSecurityHealthTool.Tool, analyzeSecurityHealthTool.Handler)
