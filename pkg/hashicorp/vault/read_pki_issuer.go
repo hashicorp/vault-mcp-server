@@ -11,7 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // ReadPkiIssuer creates a tool for reading pki issuers
@@ -35,25 +34,22 @@ func ReadPkiIssuer(logger *log.Logger) server.ServerTool {
 }
 
 func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling read_secret request")
+	logger.Debug("Handling read_pki_issuer request")
 
 	// Extract parameters
-	var mount, issuerName string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			if issuerName, ok = args["issuer_name"].(string); !ok || issuerName == "" {
-				return mcp.NewToolResultError("Missing or invalid 'issuer_name' parameter"), nil
-			}
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	issuerName, ok := args["issuer_name"].(string)
+	if !ok || issuerName == "" {
+		return mcp.NewToolResultError("Missing or invalid 'issuer_name' parameter"), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -78,7 +74,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 	}
 
-	fullPath := fmt.Sprintf("%s/issuers", strings.TrimSuffix(mount, "/"))
+	fullPath := fmt.Sprintf("%s/issuers", mount)
 
 	// Write the issuer data to the specified path
 	secret, err := client.Logical().List(fullPath)
@@ -92,12 +88,10 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 
 	var issuerId string
 
-	if keyInfo != nil {
-		for key, value := range keyInfo {
-			if value.(map[string]interface{})["issuer_name"] == issuerName {
-				issuerId = key
-				break
-			}
+	for key, value := range keyInfo {
+		if value.(map[string]interface{})["issuer_name"] == issuerName {
+			issuerId = key
+			break
 		}
 	}
 
@@ -105,7 +99,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 		return mcp.NewToolResultError(fmt.Sprintf("No issuer found with name '%s' in mount '%s'", issuerName, mount)), nil
 	}
 
-	fullPath = fmt.Sprintf("%s/issuer/%s", strings.TrimSuffix(mount, "/"), issuerId)
+	fullPath = fmt.Sprintf("%s/issuer/%s", mount, issuerId)
 
 	// Read the secret
 	secret, err = client.Logical().Read(fullPath)

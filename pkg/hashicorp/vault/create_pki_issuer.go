@@ -6,10 +6,11 @@ package vault
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // CreatePkiIssuer creates a tool for creating pki issuers
@@ -57,38 +58,35 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 	logger.Debug("Handling create_pki_issuer request")
 
 	// Extract parameters
-	var mount, issuerType, commonName, issuerName, ttl, rootMount, rootIssuer string
-
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
-
-			if issuerType, ok = args["type"].(string); !ok || issuerType != "internal" {
-				return mcp.NewToolResultError("Missing or invalid 'type' parameter"), nil
-			}
-
-			if commonName, ok = args["common_name"].(string); !ok || commonName == "" {
-				return mcp.NewToolResultError("Missing or invalid 'common_name' parameter"), nil
-			}
-
-			if issuerName, ok = args["issuer_name"].(string); !ok || issuerName == "" {
-				return mcp.NewToolResultError("Missing or invalid 'issuer_name' parameter"), nil
-			}
-
-			ttl, _ = args["ttl"].(string)
-
-			rootMount, _ = args["root_mount"].(string)
-			rootIssuer, _ = args["root_issuer"].(string)
-
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
+
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	issuerType, ok := args["type"].(string)
+	if !ok || issuerType != "internal" {
+		return mcp.NewToolResultError("Missing or invalid 'type' parameter"), nil
+	}
+
+	commonName, ok := args["common_name"].(string)
+	if !ok || commonName == "" {
+		return mcp.NewToolResultError("Missing or invalid 'common_name' parameter"), nil
+	}
+
+	issuerName, ok := args["issuer_name"].(string)
+	if !ok || issuerName == "" {
+		return mcp.NewToolResultError("Missing or invalid 'issuer_name' parameter"), nil
+	}
+
+	ttl, _ := args["ttl"].(string)
+
+	rootMount, _ := args["root_mount"].(string)
+	rootIssuer, _ := args["root_issuer"].(string)
 
 	logger.WithFields(log.Fields{
 		"mount":       mount,
@@ -117,7 +115,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 	}
 
-	fullPath := fmt.Sprintf("%s/root/generate/%s", strings.TrimSuffix(mount, "/"), issuerType)
+	fullPath := fmt.Sprintf("%s/root/generate/%s", mount, issuerType)
 
 	// If we have been passed a root issuer, we need to create an intermediate issuer
 	if rootMount != "" && rootIssuer != "" {
@@ -127,7 +125,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 			return mcp.NewToolResultError(fmt.Sprintf("root mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 		}
 
-		fullPath = fmt.Sprintf("%s/intermediate/generate/%s", strings.TrimSuffix(mount, "/"), issuerType)
+		fullPath = fmt.Sprintf("%s/intermediate/generate/%s", mount, issuerType)
 	}
 
 	issuerData := map[string]interface{}{
@@ -187,7 +185,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 			"certificate": certificateData,
 		}
 
-		fullPath = fmt.Sprintf("%s/intermediate/set-signed", strings.TrimSuffix(mount, "/"))
+		fullPath = fmt.Sprintf("%s/intermediate/set-signed", mount)
 
 		// Write the intermediate certificate
 		if _, err := client.Logical().Write(fullPath, signedData); err != nil {
@@ -199,11 +197,11 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 		vaultAddress := client.Address()
 
 		crlData := map[string]interface{}{
-			"issuing_certificates":    fmt.Sprintf("%s/v1/%s/ca", vaultAddress, strings.TrimSuffix(mount, "/")),
-			"crl_distribution_points": fmt.Sprintf("%s/v1/%s/crl", vaultAddress, strings.TrimSuffix(mount, "/")),
+			"issuing_certificates":    fmt.Sprintf("%s/v1/%s/ca", vaultAddress, mount),
+			"crl_distribution_points": fmt.Sprintf("%s/v1/%s/crl", vaultAddress, mount),
 		}
 
-		fullPath = fmt.Sprintf("%s/config/urls", strings.TrimSuffix(mount, "/"))
+		fullPath = fmt.Sprintf("%s/config/urls", mount)
 
 		// Write the crl information
 		if _, err := client.Logical().Write(fullPath, crlData); err != nil {

@@ -7,10 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // ListPkiIssuers creates a tool for listing pki issuers
@@ -33,19 +33,14 @@ func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger 
 	logger.Debug("Handling list_pki_issuers request")
 
 	// Extract parameters
-	var mount string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -69,7 +64,7 @@ func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger 
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 	}
 
-	fullPath := fmt.Sprintf("%s/issuers", strings.TrimSuffix(mount, "/"))
+	fullPath := fmt.Sprintf("%s/issuers", mount)
 
 	// Write the issuer data to the specified path
 	secret, err := client.Logical().List(fullPath)

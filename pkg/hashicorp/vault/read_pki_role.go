@@ -11,7 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // ReadPkiRole creates a tool for reading pki roles
@@ -35,25 +34,22 @@ func ReadPkiRole(logger *log.Logger) server.ServerTool {
 }
 
 func readPkiRoleHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling read_secret request")
+	logger.Debug("Handling read_pki_role request")
 
 	// Extract parameters
-	var mount, roleName string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			if roleName, ok = args["role_name"].(string); !ok || roleName == "" {
-				return mcp.NewToolResultError("Missing or invalid 'role_name' parameter"), nil
-			}
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	roleName, ok := args["role_name"].(string)
+	if !ok || roleName == "" {
+		return mcp.NewToolResultError("Missing or invalid 'role_name' parameter"), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -78,7 +74,7 @@ func readPkiRoleHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 	}
 
-	fullPath := fmt.Sprintf("%s/roles/%s", strings.TrimSuffix(mount, "/"), roleName)
+	fullPath := fmt.Sprintf("%s/roles/%s", mount, roleName)
 
 	// Read the secret
 	secret, err := client.Logical().Read(fullPath)
