@@ -114,9 +114,13 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		}
 	}
 
-	vaultSkipTLSVerify, err := strconv.ParseBool(ctx.Value(contextKey(VaultSkipTLSVerify)).(string))
-	if err != nil {
-		vaultSkipTLSVerify = false
+	var vaultSkipTLSVerify bool
+	skipTLSVal := ctx.Value(contextKey(VaultSkipTLSVerify))
+	if skipTLSVal != nil {
+		skipTLSStr, ok := skipTLSVal.(string)
+		if ok {
+			vaultSkipTLSVerify, _ = strconv.ParseBool(skipTLSStr)
+		}
 	}
 
 	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken)
