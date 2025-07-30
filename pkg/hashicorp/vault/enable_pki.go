@@ -6,6 +6,7 @@ package vault
 import (
 	"context"
 	"fmt"
+
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -57,25 +58,19 @@ func enablePkiHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	logger.Debug("Handling enable_pki request")
 
 	// Extract parameters
-	var path, description, maxTTL string
-
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-
-			if path, ok = args["path"].(string); !ok || path == "" {
-				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
-			}
-
-			description, _ = args["description"].(string)
-
-			maxTTL = args["max_ttl"].(string)
-
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
+
+	path, ok := args["path"].(string)
+	if !ok || path == "" {
+		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
+	}
+
+	description, _ := args["description"].(string)
+
+	maxTTL, _ := args["max_ttl"].(string)
 
 	logger.WithFields(log.Fields{
 		"path":        path,
