@@ -24,7 +24,7 @@ func ReadPkiRole(logger *log.Logger) server.ServerTool {
 			),
 			mcp.WithString("role_name",
 				mcp.Required(),
-				mcp.Description("The name role of the role you want to retrieve. This name must correspond to an role_name in the data returned from the list_pki_roles function."),
+				mcp.Description("The name of the role you want to retrieve. This name must correspond to a role_name in the data returned from the list_pki_roles function."),
 			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
