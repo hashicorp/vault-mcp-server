@@ -97,7 +97,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		// Let the model know that the mount already exists and, it could delete it, need be.
 		// We should not delete it automatically, as it could lead to data loss. We should return more options in the future to allow
 		// the model to decide what to do with the existing mount (such as tuning).
-		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' already exist, you should use 'delete_mount' if you want to re-create it.", path)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' already exists, you should use 'delete_mount' if you want to re-create it.", path)), nil
 	}
 
 	// Prepare mount input
