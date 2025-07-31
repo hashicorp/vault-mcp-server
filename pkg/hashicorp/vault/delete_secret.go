@@ -17,10 +17,25 @@ import (
 func DeleteSecret(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("delete_secret",
-			mcp.WithDescription("Delete a secret from a KV mount in Vault using the specified path and mount."),
-			mcp.WithString("mount", mcp.Required(), mcp.Description("The mount path of the secret engine. For example, if you want to delete to 'secrets/application/credentials', this should be 'secrets'.")),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The full path to delete the secret to without the mount prefix. For example, if you want to delete to 'secrets/application/credentials', this should be 'application/credentials'.")),
-			mcp.WithString("key", mcp.DefaultString(""), mcp.Description("A optional key in the secret to delete. If not specified, all keys in the the secret will be deleted.")),
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					DestructiveHint: ToBoolPtr(true),
+					IdempotentHint:  ToBoolPtr(false),
+				},
+			),
+			mcp.WithDescription("Delete a secret from a KV mount in Vault using the specified path and mount. If you specify a key, only that key will be deleted. If no key is specified or you delete the last key, the entire secret will be deleted."),
+			mcp.WithString("mount",
+				mcp.Required(),
+				mcp.Description("The mount path of the secret engine. For example, if you want to delete to 'secrets/application/credentials', this should be 'secrets' without the trailing slash."),
+			),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("The full path to delete the secret to without the mount prefix. For example, if you want to delete to 'secrets/application/credentials', this should be 'application/credentials'."),
+			),
+			mcp.WithString("key",
+				mcp.DefaultString(""),
+				mcp.Description("A optional key in the secret to delete. If not specified, all keys in the the secret will be deleted."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return deleteSecretHandler(ctx, req, logger)
@@ -32,28 +47,25 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	logger.Debug("Handling delete_secret request")
 
 	// Extract parameters
-	var mount, path, key string
+	args, ok := req.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
+	}
 
-	if req.Params.Arguments != nil {
-		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mount, ok = args["mount"].(string); !ok || mount == "" {
-				return mcp.NewToolResultError("Missing or invalid 'mount' parameter"), nil
-			}
+	mount, err := extractMountPath(args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
-			if path, ok = args["path"].(string); !ok || path == "" {
-				return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
-			}
+	path, ok := args["path"].(string)
+	if !ok || path == "" {
+		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
+	}
 
-			// Can be empty to delete the entire secret
-			if key, ok = args["key"].(string); !ok {
-				return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
-			}
-
-		} else {
-			return mcp.NewToolResultError("Invalid arguments format"), nil
-		}
-	} else {
-		return mcp.NewToolResultError("Missing arguments"), nil
+	// Can be empty to delete the entire secret
+	key, ok := args["key"].(string)
+	if !ok {
+		return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
 	}
 
 	logger.WithFields(log.Fields{
@@ -75,7 +87,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}
 
 	// Default to a v1 KV path
-	fullPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+	fullPath := fmt.Sprintf("%s/%s", mount, strings.TrimPrefix(path, "/"))
 
 	isV2 := false
 
@@ -85,33 +97,43 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		if m.Options["version"] == "2" {
 			isV2 = true
 			// Construct the full path for reading (KV v2 format)
-			fullPath = fmt.Sprintf("%s/data/%s", strings.TrimSuffix(mount, "/"), strings.TrimPrefix(path, "/"))
+			fullPath = fmt.Sprintf("%s/data/%s", mount, strings.TrimPrefix(path, "/"))
 		}
 	} else {
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
 	}
 
+	// Read the current secret so we can update it with the new key-value pair (or replace it)
+	currentSecret, err := client.Logical().Read(fullPath)
+
+	if currentSecret == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("no secret exists at path '%s' in mount '%s'", path, mount)), nil
+	}
+
+	if isV2 {
+		// V2 Secrets can be marked deleted, we need to check the metadata deletion_time
+		if currentSecret.Data["data"] == nil {
+			metaData, ok := currentSecret.Data["metadata"].(map[string]interface{})
+			if !ok {
+				return mcp.NewToolResultError("unexpected secret metadata format for v2 API"), nil
+			}
+			if metaData["deletion_time"] != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("secret at path '%s' in mount '%s' is deleted and cannot be read.", path, mount)), nil
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("no secret exists at path '%s' in mount '%s'", path, mount)), nil
+		}
+	}
+
 	if key != "" {
 
-		// Read the current secret so we can update it with the new key-value pair (or replace it)
-		currentSecret, err := client.Logical().Read(fullPath)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to read secret: %v", err)), nil
 		}
-		var secretData map[string]interface{}
 
+		var secretData map[string]interface{}
 		var secretsMap map[string]interface{}
 
 		if isV2 {
-			if currentSecret.Data["data"] == nil {
-				metaData, ok := currentSecret.Data["metadata"].(map[string]interface{})
-				if !ok {
-					return mcp.NewToolResultError("unexpected secret metadata format for v2 API"), nil
-				}
-				if metaData["deletion_time"] != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("Secret at path '%s' in mount '%s' is deleted and cannot be read.", path, mount)), nil
-				}
-			}
 			// V2 API structure: secret.Data["data"] contains the actual key-value pairs
 			data, ok := currentSecret.Data["data"].(map[string]interface{})
 			if !ok {
@@ -173,7 +195,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to delete secret: %v", err)), nil
 	}
 
-	successMsg := fmt.Sprintf("Successfully deleted secret '%s' at path '%s' in mount '%s'", key, path, mount)
+	successMsg := fmt.Sprintf("Successfully deleted secret at path '%s' in mount '%s'", path, mount)
 
 	logger.WithFields(log.Fields{
 		"mount": mount,

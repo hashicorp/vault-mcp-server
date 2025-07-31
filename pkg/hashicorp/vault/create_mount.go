@@ -16,11 +16,29 @@ import (
 func CreateMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("create_mount",
-			mcp.WithDescription("Create a new mount in Vault"),
-			mcp.WithString("type", mcp.Required(), mcp.Enum("kv", "kv2"), mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store.")),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The path where the mount will be created. Examples would be 'secrets' or 'kv'.")),
-			mcp.WithString("description", mcp.DefaultString(""), mcp.Description("A description for the mount.")),
-			mcp.WithObject("options", mcp.Description("Optional mount options, specific to the mount type.")),
+			mcp.WithDescription("Mount a new secrets engine on a specific path in Vault."),
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					ReadOnlyHint:   ToBoolPtr(false),
+					IdempotentHint: ToBoolPtr(false),
+				},
+			),
+			mcp.WithString("type",
+				mcp.Required(),
+				mcp.Enum("kv", "kv2"),
+				mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store."),
+			),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("The path where the mount will be created. Examples would be 'secrets' or 'kv'."),
+			),
+			mcp.WithString("description",
+				mcp.DefaultString(""),
+				mcp.Description("A description for the mount."),
+			),
+			mcp.WithObject("options",
+				mcp.Description("Optional mount options, specific to the mount type."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return createMountHandler(ctx, req, logger)
@@ -76,10 +94,10 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 
 	// Check if the mount exists
 	if _, ok := mounts[path+"/"]; ok {
-		// Let the model know that the mount already exists and ift could delete it, need be.
-		// We should not delete it automatically, as it could lead to data loss and we should return more options in the future to allow
+		// Let the model know that the mount already exists and, it could delete it, need be.
+		// We should not delete it automatically, as it could lead to data loss. We should return more options in the future to allow
 		// the model to decide what to do with the existing mount (such as tuning).
-		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' already exist, you should use 'delete_mount' if you want to to re-create it.", path)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' already exists, you should use 'delete_mount' if you want to re-create it.", path)), nil
 	}
 
 	// Prepare mount input

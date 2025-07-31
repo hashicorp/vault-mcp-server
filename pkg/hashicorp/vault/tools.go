@@ -9,6 +9,8 @@ import (
 )
 
 func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
+
+	// Tools for Vault mount management
 	listMountsTool := ListMounts(logger)
 	hcServer.AddTool(listMountsTool.Tool, listMountsTool.Handler)
 
@@ -18,6 +20,7 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	deleteMountTool := DeleteMount(logger)
 	hcServer.AddTool(deleteMountTool.Tool, deleteMountTool.Handler)
 
+	// Tools for KV secrets management
 	listSecretsTool := ListSecrets(logger)
 	hcServer.AddTool(listSecretsTool.Tool, listSecretsTool.Handler)
 
@@ -29,4 +32,36 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 
 	deleteSecretTool := DeleteSecret(logger)
 	hcServer.AddTool(deleteSecretTool.Tool, deleteSecretTool.Handler)
+
+	// Tools for PKI management
+	enablePkiTool := EnablePki(logger)
+	hcServer.AddTool(enablePkiTool.Tool, enablePkiTool.Handler)
+
+	createPkiIssuer := CreatePkiIssuer(logger)
+	hcServer.AddTool(createPkiIssuer.Tool, createPkiIssuer.Handler)
+
+	listPkiIssuers := ListPkiIssuers(logger)
+	hcServer.AddTool(listPkiIssuers.Tool, listPkiIssuers.Handler)
+
+	readPkiIssuer := ReadPkiIssuer(logger)
+	hcServer.AddTool(readPkiIssuer.Tool, readPkiIssuer.Handler)
+
+	listPkiRoles := ListPkiRoles(logger)
+	hcServer.AddTool(listPkiRoles.Tool, listPkiRoles.Handler)
+
+	readPkiRole := ReadPkiRole(logger)
+	hcServer.AddTool(readPkiRole.Tool, readPkiRole.Handler)
+
+	createPkiRole := CreatePkiRole(logger)
+	hcServer.AddTool(createPkiRole.Tool, createPkiRole.Handler)
+
+	deletePkiRole := DeletePkiRole(logger)
+	hcServer.AddTool(deletePkiRole.Tool, deletePkiRole.Handler)
+
+	issuePkiCertificate := IssuePkiCertificate(logger)
+	hcServer.AddTool(issuePkiCertificate.Tool, issuePkiCertificate.Handler)
+}
+
+func ToBoolPtr(b bool) *bool {
+	return &b
 }

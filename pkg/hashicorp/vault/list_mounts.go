@@ -25,6 +25,11 @@ type Mount struct {
 func ListMounts(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("list_mounts",
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					IdempotentHint: ToBoolPtr(true),
+				},
+			),
 			mcp.WithDescription("List the available mounted secrets engines on a Vault Server."),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

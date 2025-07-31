@@ -16,8 +16,17 @@ import (
 func DeleteMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.NewTool("delete_mount",
+			mcp.WithToolAnnotation(
+				mcp.ToolAnnotation{
+					DestructiveHint: ToBoolPtr(true),
+					IdempotentHint:  ToBoolPtr(true),
+				},
+			),
 			mcp.WithDescription("Delete a mounted secret engine in Vault. Use with extreme caution as this will remove all data under the mount path!"),
-			mcp.WithString("path", mcp.Required(), mcp.Description("The path where of mount to be deleted. Examples would be 'secrets' or 'kv'.")),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("The path where of mount to be deleted. Examples would be 'secrets' or 'kv'."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return deleteMountHandler(ctx, req, logger)

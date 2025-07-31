@@ -18,9 +18,9 @@ import (
 func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requiredHeaders := []string{VaultAddress, VaultToken}
+			requiredHeaders := []string{VaultAddress, VaultToken, VaultSkipTLSVerify}
 			ctx := r.Context()
-
+			
 			for _, header := range requiredHeaders {
 				// Priority order: HTTP header -> Query parameter -> Environment variable
 				headerValue := r.Header.Get(textproto.CanonicalMIMEHeaderKey(header))
