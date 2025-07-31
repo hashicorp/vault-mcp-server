@@ -40,7 +40,7 @@ func CreatePkiRole(logger *log.Logger) server.ServerTool {
 			),
 			mcp.WithBoolean("allow_glob_domains",
 				mcp.DefaultBool(false),
-				mcp.Description("This parameter allows the role to issue certificates with wildcard domains. If set to true, you can use wildcards in the allowed domains (e.g.), '*.example.com'. If set to false, only exact domain matches are allowed. Defaults to false."),
+				mcp.Description("This parameter allows the role to issue certificates with wildcard domains. If set to true, you can use wildcards in the allowed domains (e.g., '*.example.com'). If set to false, only exact domain matches are allowed. Defaults to false."),
 			),
 			mcp.WithBoolean("allow_ip_sans",
 				mcp.DefaultBool(false),
