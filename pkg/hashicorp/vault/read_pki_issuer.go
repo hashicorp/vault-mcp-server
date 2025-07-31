@@ -24,7 +24,7 @@ func ReadPkiIssuer(logger *log.Logger) server.ServerTool {
 			),
 			mcp.WithString("issuer_name",
 				mcp.Required(),
-				mcp.Description("The name issuer of the issuer you want to retrieve. This name must correspond to an issuer_name in the data returned from the list_pki_issuers function."),
+				mcp.Description("The name of the issuer you want to retrieve. This name must correspond to an issuer_name in the data returned from the list_pki_issuers function."),
 			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
