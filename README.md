@@ -105,7 +105,7 @@ The HTTP server includes a comprehensive middleware stack:
     }
     ```
 
-2. Save the file as `mcp.json` in the root of your project.
+2. Save `mcp.json` file.
 
 3. Restart Visual Studio Code (or reload the window).
 
