@@ -81,40 +81,35 @@ The HTTP server includes a comprehensive middleware stack:
 
 ## Integration with Visual Studio Code
 
-1. Open or create your Visual Studio Code configuration file:
 
-    ```bash
-    # On macOS
-    code ~/Library/Application\ Support/Code/User/settings.json
-    ```
-
-2. Add the Vault MCP server configuration in the mcp section:
+1. In your project workspace root, create or open the `.vscode/mcp.json` configuration file. Alternatively, to add an MCP to your user configuration, run the `MCP: Open User Configuration` command, which opens the mcp.json file in your user profile. If the file does not exist, VS Code creates it for you.
 
     ```json
-    "mcp": {
-         "inputs": [
-             {
-                 "type": "promptString",
-                 "id": "vault-token",
-                 "description": "Vault Token",
-                 "password": true
-             }
-         ],
-         "servers": {
-             "MCP Server Vault": {
-                 "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
-                 "headers": {
-                     "VAULT_TOKEN" : "${input:vault-token}"
-                 }
-             }
-         }
-     }
+    {
+      "inputs": [
+        {
+          "type": "promptString",
+          "id": "vault-token",
+          "description": "Vault Token",
+          "password": true
+        }
+      ],
+      "servers": {
+        "MCP Server Vault": {
+          "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
+          "headers": {
+            "VAULT_TOKEN": "${input:vault-token}"
+          }
+        }
+      }
+    }
     ```
 
-3. Restart Visual Studio Code (or start server in settings.json)
+2. Save `mcp.json` file.
 
-**Note: Visual Studio Code will prompt you for the VAULT_TOKEN once and store
-it securely in the client.**
+3. Restart Visual Studio Code (or reload the window).
+
+**Note:** Visual Studio Code will prompt you for the VAULT_TOKEN once and store it securely in the client.
 
 ## Working with Docker
 
