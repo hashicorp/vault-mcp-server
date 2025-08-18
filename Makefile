@@ -1,6 +1,7 @@
 SHELL := /usr/bin/env bash -euo pipefail -c
 
 BINARY_NAME ?= ./bin/vault-mcp-server
+BASENAME := $(shell basename $(BINARY_NAME))
 VERSION ?= $(if $(shell printenv VERSION),$(shell printenv VERSION),dev)
 
 GO=go
@@ -49,7 +50,7 @@ deps:
 
 # Build docker image
 docker-build:
-	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(BINARY_NAME):$(VERSION) .
+	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(BASENAME):$(VERSION) .
 
 # Run HTTP server locally
 run-http:
@@ -57,7 +58,7 @@ run-http:
 
 # Run HTTP server in Docker
 docker-run-http:
-	$(DOCKER) run -p 8080:8080 --rm $(BINARY_NAME):$(VERSION) http
+	$(DOCKER) run -p 8080:8080 --rm $(BASENAME):$(VERSION) http
 
 # Test HTTP endpoint
 test-http:
@@ -72,8 +73,8 @@ test-http:
 # Clean up test containers
 cleanup-test-containers:
 	@echo "Cleaning up test containers..."
-	@$(DOCKER) ps -q --filter "ancestor=$(BINARY_NAME):test-e2e" | xargs -r $(DOCKER) stop
-	@$(DOCKER) ps -aq --filter "ancestor=$(BINARY_NAME):test-e2e" | xargs -r $(DOCKER) rm
+	@$(DOCKER) ps -q --filter "ancestor=$(BASENAME):test-e2e" | xargs -r $(DOCKER) stop
+	@$(DOCKER) ps -aq --filter "ancestor=$(BASENAME):test-e2e" | xargs -r $(DOCKER) rm
 	@echo "Test container cleanup complete"
 
 # Show help
