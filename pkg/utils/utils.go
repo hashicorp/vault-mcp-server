@@ -1,11 +1,11 @@
-package vault
+package utils
 
 import (
 	"fmt"
 	"strings"
 )
 
-func extractMountPath(args map[string]any) (string, error) {
+func ExtractMountPath(args map[string]any) (string, error) {
 	mount, ok := args["mount"].(string)
 	if !ok || mount == "" || mount == "/" {
 		return "", fmt.Errorf("missing or invalid 'mount' parameter")
@@ -15,4 +15,8 @@ func extractMountPath(args map[string]any) (string, error) {
 	mount = strings.TrimSuffix(mount, "/")
 
 	return mount, nil
+}
+
+func ToBoolPtr(b bool) *bool {
+	return &b
 }

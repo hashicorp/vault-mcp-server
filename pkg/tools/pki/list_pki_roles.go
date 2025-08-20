@@ -1,36 +1,38 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package pki
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
 
-// ListPkiIssuers creates a tool for listing pki issuers
-func ListPkiIssuers(logger *log.Logger) server.ServerTool {
+// ListPkiRoles creates a tool for listing pki roles
+func ListPkiRoles(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
-		Tool: mcp.NewTool("list_pki_issuers",
-			mcp.WithDescription("Get a list of PKI issuers on a specific pki mount in Vault, allowing you to see all the configured issuers for that mount."),
+		Tool: mcp.NewTool("list_pki_roles",
+			mcp.WithDescription("Get a list of PKI roles which are able to issue certificates, allowing you to see all the configured roles for a specific PKI mount in Vault."),
 			mcp.WithString("mount",
 				mcp.DefaultString("pki"),
-				mcp.Description("The mount where the pki issuer will be listed. Defaults to 'pki'."),
+				mcp.Description("The mount where the pki roles will be listed. Defaults to 'pki'."),
 			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return listPkiIssuersHandler(ctx, req, logger)
+			return listPkiRolesHandler(ctx, req, logger)
 		},
 	}
 }
 
-func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
-	logger.Debug("Handling list_pki_issuers request")
+func listPkiRolesHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.Logger) (*mcp.CallToolResult, error) {
+	logger.Debug("Handling list_pki_roles request")
 
 	// Extract parameters
 	args, ok := req.Params.Arguments.(map[string]interface{})
@@ -38,23 +40,23 @@ func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger 
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	logger.WithFields(log.Fields{
 		"mount": mount,
-	}).Debug("Listing pki issuers with parameters")
+	}).Debug("Listing pki roles with parameters")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -64,17 +66,17 @@ func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger 
 		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist, you should use 'enable_pki' if you want enable pki on this mount.", mount)), nil
 	}
 
-	fullPath := fmt.Sprintf("%s/issuers", mount)
+	fullPath := fmt.Sprintf("%s/roles", mount)
 
 	// Write the issuer data to the specified path
-	secret, err := client.Logical().List(fullPath)
+	secret, err := vault.Logical().List(fullPath)
 
-	if err != nil {
+	if err != nil || secret == nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to read path '%s': %v", fullPath, err)), nil
 	}
 
 	// V1 API structure: secret.Data directly contains the key-value pairs
-	keyInfo := secret.Data["key_info"]
+	keyInfo := secret.Data["keys"]
 
 	// Marshal to JSON
 	jsonData, err := json.Marshal(keyInfo)
@@ -85,7 +87,7 @@ func listPkiIssuersHandler(ctx context.Context, req mcp.CallToolRequest, logger 
 
 	logger.WithFields(log.Fields{
 		"mount": mount,
-	}).Debug("Successfully read pki issuers")
+	}).Debug("Successfully read pki roles")
 
 	return mcp.NewToolResultText(string(jsonData)), nil
 }

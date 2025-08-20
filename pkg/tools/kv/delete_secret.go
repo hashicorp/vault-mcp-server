@@ -1,11 +1,13 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package kv
 
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,8 +21,8 @@ func DeleteSecret(logger *log.Logger) server.ServerTool {
 		Tool: mcp.NewTool("delete_secret",
 			mcp.WithToolAnnotation(
 				mcp.ToolAnnotation{
-					DestructiveHint: ToBoolPtr(true),
-					IdempotentHint:  ToBoolPtr(false),
+					DestructiveHint: utils.ToBoolPtr(true),
+					IdempotentHint:  utils.ToBoolPtr(false),
 				},
 			),
 			mcp.WithDescription("Delete a secret from a KV mount in Vault using the specified path and mount. If you specify a key, only that key will be deleted. If no key is specified or you delete the last key, the entire secret will be deleted."),
@@ -52,7 +54,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -75,13 +77,13 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}).Debug("Deleting secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -104,7 +106,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}
 
 	// Read the current secret so we can update it with the new key-value pair (or replace it)
-	currentSecret, err := client.Logical().Read(fullPath)
+	currentSecret, err := vault.Logical().Read(fullPath)
 
 	if currentSecret == nil {
 		return mcp.NewToolResultError(fmt.Sprintf("no secret exists at path '%s' in mount '%s'", path, mount)), nil
@@ -153,7 +155,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		// If we have no keys left, we should not write an empty secret
 		if len(secretsMap) != 0 {
 			// Write (or update) the secret
-			versionInfo, err := client.Logical().Write(fullPath, secretData)
+			versionInfo, err := vault.Logical().Write(fullPath, secretData)
 			if err != nil {
 				logger.WithError(err).WithFields(log.Fields{
 					"mount":     mount,
@@ -184,7 +186,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}
 
 	// Delete the secret
-	_, err = client.Logical().Delete(fullPath)
+	_, err = vault.Logical().Delete(fullPath)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"mount":     mount,

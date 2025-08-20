@@ -1,12 +1,14 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package kv
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -21,7 +23,7 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("List secrets in a KV mount under a specific path in Vault"),
 			mcp.WithToolAnnotation(
 				mcp.ToolAnnotation{
-					ReadOnlyHint: ToBoolPtr(true),
+					ReadOnlyHint: utils.ToBoolPtr(true),
 				},
 			),
 			mcp.WithString("mount",
@@ -47,7 +49,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -63,7 +65,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Listing secrets")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
@@ -72,7 +74,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	// Construct the full path for listing
 	fullPath := fmt.Sprintf(mount+"/%s", path)
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -92,7 +94,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}
 
 	// List secrets
-	secret, err := client.Logical().List(fullPath)
+	secret, err := vault.Logical().List(fullPath)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"mount":     mount,

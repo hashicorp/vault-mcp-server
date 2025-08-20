@@ -1,12 +1,14 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package kv
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 
 	"strings"
 
@@ -44,7 +46,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -60,13 +62,13 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	}).Debug("Reading secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -89,7 +91,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	}
 
 	// Read the secret
-	secret, err := client.Logical().Read(fullPath)
+	secret, err := vault.Logical().Read(fullPath)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"mount":     mount,
