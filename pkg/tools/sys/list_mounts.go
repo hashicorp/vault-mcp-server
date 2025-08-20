@@ -43,14 +43,14 @@ func listMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	logger.Debug("Handling list_mounts request")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
 	// List mounts from Vault
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		logger.WithError(err).Error("Failed to list mounts")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to list mounts: %v", err)), nil

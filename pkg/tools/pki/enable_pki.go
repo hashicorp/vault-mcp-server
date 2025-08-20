@@ -79,13 +79,13 @@ func enablePkiHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	}).Debug("Creating pki mount with parameters")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -105,7 +105,7 @@ func enablePkiHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	}
 
 	// Create the mount
-	err = client.Sys().Mount(path, mountInput)
+	err = vault.Sys().Mount(path, mountInput)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"path": path,
@@ -117,13 +117,13 @@ func enablePkiHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 		MaxLeaseTTL: maxTTL,
 	}
 
-	err = client.Sys().TuneMount(path, mountOptions)
+	err = vault.Sys().TuneMount(path, mountOptions)
 
 	// Handle error if tuning the mount fails and delete the mount
 	if err != nil {
 		logger.WithError(err).WithField("path", path).Error("Failed to tune pki mount")
 		// Delete the mount
-		err = client.Sys().Unmount(path)
+		err = vault.Sys().Unmount(path)
 		if err != nil {
 			logger.WithError(err).WithField("path", path).Error("Failed to delete pki mount")
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to tune pki mount and failed to delete pki mount at path '%s': %v", path, err)), nil

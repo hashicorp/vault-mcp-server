@@ -102,13 +102,13 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 	}).Debug("Creating certificate issuer with parameters")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -138,7 +138,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 	}
 
 	// Write the issuer data to the specified path
-	secret, err := client.Logical().Write(fullPath, issuerData)
+	secret, err := vault.Logical().Write(fullPath, issuerData)
 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write to path '%s': %v", fullPath, err)), nil
@@ -158,7 +158,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 		fullPath = fmt.Sprintf("%s/root/sign-intermediate", strings.TrimSuffix(rootMount, "/"))
 
 		// Sign the intermediate certificate with the root issuer
-		if secret, err = client.Logical().Write(fullPath, signData); err != nil {
+		if secret, err = vault.Logical().Write(fullPath, signData); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set root issuer '%s': %v", rootIssuer, err)), nil
 		}
 
@@ -191,13 +191,13 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 		fullPath = fmt.Sprintf("%s/intermediate/set-signed", mount)
 
 		// Write the intermediate certificate
-		if _, err := client.Logical().Write(fullPath, signedData); err != nil {
+		if _, err := vault.Logical().Write(fullPath, signedData); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set intermediate issuer '%s': %v", issuerName, err)), nil
 		}
 
 		successMsg = fmt.Sprintf("Successfully created pki intermediate issuer with name '%s' on mount '%s'. Certificate chain data: \n%s", issuerName, mount, certificateChainStr)
 
-		vaultAddress := client.Address()
+		vaultAddress := vault.Address()
 
 		crlData := map[string]interface{}{
 			"issuing_certificates":    fmt.Sprintf("%s/v1/%s/ca", vaultAddress, mount),
@@ -207,7 +207,7 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 		fullPath = fmt.Sprintf("%s/config/urls", mount)
 
 		// Write the crl information
-		if _, err := client.Logical().Write(fullPath, crlData); err != nil {
+		if _, err := vault.Logical().Write(fullPath, crlData); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set crl for mount '%s': %v", mount, err)), nil
 		}
 

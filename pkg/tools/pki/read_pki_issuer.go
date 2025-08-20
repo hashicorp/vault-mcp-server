@@ -60,13 +60,13 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	}).Debug("Reading issuer details")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -79,7 +79,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	fullPath := fmt.Sprintf("%s/issuers", mount)
 
 	// Write the issuer data to the specified path
-	secret, err := client.Logical().List(fullPath)
+	secret, err := vault.Logical().List(fullPath)
 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to read path '%s': %v", fullPath, err)), nil
@@ -104,7 +104,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	fullPath = fmt.Sprintf("%s/issuer/%s", mount, issuerId)
 
 	// Read the secret
-	secret, err = client.Logical().Read(fullPath)
+	secret, err = vault.Logical().Read(fullPath)
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"mount":     mount,

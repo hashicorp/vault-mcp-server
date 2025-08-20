@@ -56,14 +56,14 @@ func deleteMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	logger.WithField("path", path).Debug("Deleting mount")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
 	// Delete the mount
-	err = client.Sys().Unmount(path)
+	err = vault.Sys().Unmount(path)
 	if err != nil {
 		logger.WithError(err).WithField("path", path).Error("Failed to delete mount")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to delete mount at path '%s': %v", path, err)), nil

@@ -77,13 +77,13 @@ func issuePkiCertificateHandler(ctx context.Context, req mcp.CallToolRequest, lo
 	}).Debug("Creating certificate with parameters")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -101,7 +101,7 @@ func issuePkiCertificateHandler(ctx context.Context, req mcp.CallToolRequest, lo
 	}
 
 	// Write the issuer data to the specified path
-	secret, err := client.Logical().Write(fullPath, requestData)
+	secret, err := vault.Logical().Write(fullPath, requestData)
 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write to path '%s': %v", fullPath, err)), nil

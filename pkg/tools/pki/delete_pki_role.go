@@ -59,13 +59,13 @@ func deletePkiRoleHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	}).Debug("Deleting pki role with parameters")
 
 	// Get Vault client from context
-	client, err := client.GetVaultClientFromContext(ctx, logger)
+	vault, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := client.Sys().ListMounts()
+	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
 	}
@@ -78,7 +78,7 @@ func deletePkiRoleHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	fullPath := fmt.Sprintf("%s/roles/%s", mount, roleName)
 
 	// Write the role data to the specified path
-	_, err = client.Logical().Delete(fullPath)
+	_, err = vault.Logical().Delete(fullPath)
 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write to path '%s': %v", fullPath, err)), nil
