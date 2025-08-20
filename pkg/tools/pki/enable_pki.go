@@ -1,11 +1,12 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package pki
 
 import (
 	"context"
 	"fmt"
+	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
 
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -78,7 +79,7 @@ func enablePkiHandler(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	}).Debug("Creating pki mount with parameters")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	client, err := client2.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

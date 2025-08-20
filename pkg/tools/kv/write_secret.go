@@ -1,11 +1,14 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package kv
 
 import (
 	"context"
 	"fmt"
+	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
+
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,8 +22,8 @@ func WriteSecret(logger *log.Logger) server.ServerTool {
 		Tool: mcp.NewTool("write_secret",
 			mcp.WithToolAnnotation(
 				mcp.ToolAnnotation{
-					DestructiveHint: ToBoolPtr(true),  // This is destructive because it overwrites existing secrets on a kv1
-					IdempotentHint:  ToBoolPtr(false), // We are not idempotent because writing a secret will always create a new version on the kv2
+					DestructiveHint: utils.ToBoolPtr(true),  // This is destructive because it overwrites existing secrets on a kv1
+					IdempotentHint:  utils.ToBoolPtr(false), // We are not idempotent because writing a secret will always create a new version on the kv2
 				},
 			),
 			mcp.WithDescription("Writes a secret value to a KV store in Vault using the specified path and mount. Supports both KV v1 and v2 mounts. If a KV v2 mount is detected, the currently stored version of the secret will be returned."),
@@ -56,7 +59,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -83,7 +86,7 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Writing secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	client, err := client2.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

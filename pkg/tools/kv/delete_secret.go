@@ -1,11 +1,13 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package kv
 
 import (
 	"context"
 	"fmt"
+	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,8 +21,8 @@ func DeleteSecret(logger *log.Logger) server.ServerTool {
 		Tool: mcp.NewTool("delete_secret",
 			mcp.WithToolAnnotation(
 				mcp.ToolAnnotation{
-					DestructiveHint: ToBoolPtr(true),
-					IdempotentHint:  ToBoolPtr(false),
+					DestructiveHint: utils.ToBoolPtr(true),
+					IdempotentHint:  utils.ToBoolPtr(false),
 				},
 			),
 			mcp.WithDescription("Delete a secret from a KV mount in Vault using the specified path and mount. If you specify a key, only that key will be deleted. If no key is specified or you delete the last key, the entire secret will be deleted."),
@@ -52,7 +54,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -75,7 +77,7 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 	}).Debug("Deleting secret")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	client, err := client2.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

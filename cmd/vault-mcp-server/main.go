@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 	stdlog "log"
 	"net/http"
 	"os"
@@ -14,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hashicorp/vault-mcp-server/pkg/hashicorp/vault"
 	"github.com/hashicorp/vault-mcp-server/version"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -92,7 +93,7 @@ func runHTTPServer(logger *log.Logger, host string, port string) error {
 	defer stop()
 
 	hcServer := NewServer(version.Version, logger)
-	vault.InitTools(hcServer, logger)
+	tools.InitTools(hcServer, logger)
 
 	return httpServerInit(ctx, hcServer, logger, host, port)
 }
@@ -122,9 +123,9 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	})
 
 	// Apply middleware stack
-	handler := vault.CORSMiddleware()(mux)
-	handler = vault.VaultContextMiddleware(logger)(handler)
-	handler = vault.LoggingMiddleware(logger)(handler)
+	handler := client.CORSMiddleware()(mux)
+	handler = client.VaultContextMiddleware(logger)(handler)
+	handler = client.LoggingMiddleware(logger)(handler)
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	httpServer := &http.Server{
@@ -164,7 +165,7 @@ func runStdioServer(logger *log.Logger) error {
 	defer stop()
 
 	hcServer := NewServer(version.Version, logger)
-	vault.InitTools(hcServer, logger)
+	tools.InitTools(hcServer, logger)
 
 	return serverInit(ctx, hcServer, logger)
 }
@@ -180,10 +181,10 @@ func NewServer(version string, logger *log.Logger, opts ...server.ServerOption) 
 	// Create hooks for session management
 	hooks := &server.Hooks{}
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
-		vault.NewSessionHandler(ctx, session, logger)
+		client.NewSessionHandler(ctx, session, logger)
 	})
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
-		vault.EndSessionHandler(ctx, session, logger)
+		client.EndSessionHandler(ctx, session, logger)
 	})
 
 	// Add hooks to options

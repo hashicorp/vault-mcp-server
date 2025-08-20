@@ -1,12 +1,14 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package pki
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -42,7 +44,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 		return mcp.NewToolResultError("Missing or invalid arguments format"), nil
 	}
 
-	mount, err := extractMountPath(args)
+	mount, err := utils.ExtractMountPath(args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -58,7 +60,7 @@ func readPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger *
 	}).Debug("Reading issuer details")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	client, err := client2.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil

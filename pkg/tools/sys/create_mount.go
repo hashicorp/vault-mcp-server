@@ -1,11 +1,13 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package vault
+package sys
 
 import (
 	"context"
 	"fmt"
+	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,8 +21,8 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 			mcp.WithDescription("Mount a new secrets engine on a specific path in Vault."),
 			mcp.WithToolAnnotation(
 				mcp.ToolAnnotation{
-					ReadOnlyHint:   ToBoolPtr(false),
-					IdempotentHint: ToBoolPtr(false),
+					ReadOnlyHint:   utils.ToBoolPtr(false),
+					IdempotentHint: utils.ToBoolPtr(false),
 				},
 			),
 			mcp.WithString("type",
@@ -81,7 +83,7 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Creating mount with parameters")
 
 	// Get Vault client from context
-	client, err := GetVaultClientFromContext(ctx, logger)
+	client, err := client2.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
