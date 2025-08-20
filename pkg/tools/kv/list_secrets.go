@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	client2 "github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
 	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	"strings"
 
@@ -65,7 +65,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	}).Debug("Listing secrets")
 
 	// Get Vault client from context
-	client, err := client2.GetVaultClientFromContext(ctx, logger)
+	client, err := client.GetVaultClientFromContext(ctx, logger)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
