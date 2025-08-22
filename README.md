@@ -119,6 +119,16 @@ Build the docker image:
 make docker-build
 ```
 
+Build the image with a custom registry:
+```bash
+make docker-build DOCKER_REGISTRY=your-registry.com
+```
+
+Push the image to a custom registry:
+```bash
+make docker-push DOCKER_REGISTRY=your-registry.com
+```
+
 Run the Vault container and get the root token:
 
 ```bash
