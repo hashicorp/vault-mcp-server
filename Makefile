@@ -7,10 +7,13 @@ VERSION ?= $(if $(shell printenv VERSION),$(shell printenv VERSION),dev)
 GO=go
 DOCKER=docker
 
+DOCKER_REGISTRY ?= docker.io
+IMAGE_NAME = $(DOCKER_REGISTRY)/$(BASENAME):$(VERSION)
+
 TARGET_DIR ?= $(CURDIR)/dist
 
 # Build flags
-LDFLAGS=-ldflags="-s -w -X github.com/hashicorp/vault-mcp-server/version.GitCommit=$(shell git rev-parse HEAD) -X github.com/hashicorp/vault-mcp-server/version.BuildDate=$(shell git show --no-show-signature -s --format=%cd --date=format:"%Y-%m-%dT%H:%M:%SZ" HEAD)"
+LDFLAGS=-ldflags="-s -w -X github.com/hashicorp/$(BASENAME)/version.GitCommit=$(shell git rev-parse HEAD) -X github.com/hashicorp/$(BASENAME)/version.BuildDate=$(shell git show --no-show-signature -s --format=%cd --date=format:"%Y-%m-%dT%H:%M:%SZ" HEAD)"
 
 .PHONY: all build crt-build test test-e2e clean deps docker-build run-http docker-run-http test-http cleanup-test-containers help
 
@@ -24,7 +27,7 @@ all: build
 ARCH     = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
 OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
 build:
-	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/vault-mcp-server
+	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/$(BASENAME)
 
 crt-build:
 	@mkdir -p $(TARGET_DIR)
@@ -50,7 +53,10 @@ deps:
 
 # Build docker image
 docker-build:
-	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(BASENAME):$(VERSION) .
+	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+
+docker-push: docker-build
+	$(DOCKER) push $(IMAGE_NAME)
 
 # Run HTTP server locally
 run-http:
@@ -58,7 +64,7 @@ run-http:
 
 # Run HTTP server in Docker
 docker-run-http:
-	$(DOCKER) run -p 8080:8080 --rm $(BASENAME):$(VERSION) http
+	$(DOCKER) run -p 8080:8080 --rm $(IMAGE_NAME) ./$(BASENAME) http --transport-port 8080
 
 # Test HTTP endpoint
 test-http:
