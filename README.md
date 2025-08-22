@@ -306,13 +306,26 @@ make test-http
 
 ```
 vault-mcp-server/
-├── cmd/vault-mcp-server/          # Main application entry point
-├── pkg/hashicorp/vault/           # Core vault functionality
-│   ├── client.go                  # Vault client management
-│   ├── middleware.go              # HTTP middleware stack
-│   ├── tools.go                   # Tool registration
-│   └── *_test.go                  # Unit tests
-├── version/                       # Version management
-├── e2e/                          # End-to-end tests
-└── resources/                     # Resource definitions
+├── bin/                                  # Binary output directory
+│   └── vault-mcp-server                  # Compiled binary
+├── cmd/vault-mcp-server/                 # Main application entry point
+│   ├── init.go                           # Initialization code
+│   └── main.go                           # Main application
+├── pkg/                                  # Package directory
+│   ├── client/                           # Client implementation
+│   │   ├── client.go                     # Core client functionality
+│   │   └── middleware.go                 # HTTP middleware
+│   ├── tools/                            # MCP tools implementation
+│   │   ├── kv/                           # Key-Value tools
+│   │   ├── pki/                          # PKI certificate tools
+│   │   ├── sys/                          # System management tools
+│   │   └── tools.go                      # Tool registration
+│   └── utils/                            # Utility functions
+├── scripts/                              # Build and utility scripts
+├── version/                              # Version information
+├── e2e/                                  # End-to-end tests
+├── Dockerfile                            # Container build definition
+├── Makefile                              # Build automation
+├── go.mod                                # Go module definition
+└── LICENSE                               # License information
 ```
