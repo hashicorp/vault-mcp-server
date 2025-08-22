@@ -145,56 +145,98 @@ docker run --network=mcp -p 8080:8080 -e VAULT_ADDR='http://vault-dev:8200' -e V
 
 ## Available Tools
 
-### create_mount
+### Mount Management Tools
 
+#### create_mount
 Creates a new mount in Vault.
-
-- `type`: The type of mount (e.g., 'kv', 'kv2')
+- `type`: The type of mount (e.g., 'kv', 'kv2', 'pki')
 - `path`: The path where the mount will be created
 - `description`: (Optional) Description for the mount
 
-### list_mounts
-
+#### list_mounts
 Lists all mounts in Vault.
-
 - No parameters required
 
-### delete_mount
-
+#### delete_mount
 Delete a mount in Vault.
-
 - `path`: The path to the mount to be deleted
 
-### list_secrets
+### Key-Value Tools
 
+#### list_secrets
 Lists secrets in a KV mount under a specific path in Vault.
-
 - `mount`: The mount path of the secret engine
 - `path`: (Optional) The path to list secrets from (defaults to root)
 
-### delete_secret
-
+#### delete_secret
 Delete secrets (or keys) in a KV mount under a specific path in Vault.
-
 - `mount`: The mount path of the secret engine
 - `path`: The path to the secret to delete
-- `key`: (Optional) The key name to delete from the secret (defaults to deleting the entire secret)
+- `key`: (Optional) The key name to delete from the entire secret (defaults to deleting the entire secret)
 
-### write_secret
-
+#### write_secret
 Writes a secret to a KV mount in Vault.
-
 - `mount`: The mount path of the secret engine
 - `path`: The full path to write the secret to
 - `key`: The key name for the secret
 - `value`: The value to store
 
-### read_secret
-
+#### read_secret
 Reads a secret from a KV mount in Vault.
-
 - `mount`: The mount path of the secret engine
 - `path`: The full path to read the secret from
+
+### PKI Tools
+
+#### enable_pki
+Enables and configures a PKI secrets engine.
+- `path`: The path where the PKI engine will be mounted
+- `description`: (Optional) Description for the PKI mount
+
+#### create_pki_issuer
+Creates a new PKI issuer.
+- `mount`: The mount path of the PKI engine
+- `name`: Name of the issuer
+- `certificate`: The PEM-encoded certificate
+- `privateKey`: The PEM-encoded private key
+
+#### list_pki_issuers
+Lists all PKI issuers in a mount.
+- `mount`: The mount path of the PKI engine
+
+#### read_pki_issuer
+Reads details about a specific PKI issuer.
+- `mount`: The mount path of the PKI engine
+- `name`: Name of the issuer
+
+#### create_pki_role
+Creates a new PKI role for issuing certificates.
+- `mount`: The mount path of the PKI engine
+- `name`: Name of the role
+- `config`: Role configuration parameters (TTL, allowed domains, etc.)
+
+#### read_pki_role
+Reads a PKI role configuration.
+- `mount`: The mount path of the PKI engine
+- `name`: Name of the role
+
+#### list_pki_roles
+Lists all PKI roles in a mount.
+- `mount`: The mount path of the PKI engine
+
+#### delete_pki_role
+Deletes a PKI role.
+- `mount`: The mount path of the PKI engine
+- `name`: Name of the role
+
+#### issue_pki_certificate
+Issues a new certificate using a PKI role.
+- `mount`: The mount path of the PKI engine
+- `role`: Name of the role to use
+- `commonName`: Common name for the certificate
+- `altNames`: (Optional) Alternative names for the certificate
+- `ipSans`: (Optional) IP SANs for the certificate
+- `ttl`: (Optional) Time-to-live for the certificate
 
 ## Command Line Usage
 
