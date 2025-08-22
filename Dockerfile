@@ -11,7 +11,7 @@
 # ===================================
 
 # certbuild captures the ca-certificates
-FROM docker.mirror.hashicorp.services/alpine:3.22 AS certbuild
+FROM docker.mirror.hashicorp.services/alpine:3.22@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1 AS certbuild
 RUN apk add --no-cache ca-certificates
 
 # devbuild compiles the binary
