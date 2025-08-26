@@ -25,11 +25,12 @@ all: build
 # Not using 'go env GOOS/GOARCH' here so 'make docker' will work without local Go install.
 # Always use CGO_ENABLED=0 to ensure a statically linked binary is built
 ifdef PLATFORM
-OS       = $(shell echo $(PLATFORM) | cut -d'/' -f1)
-ARCH     = $(shell echo $(PLATFORM) | cut -d'/' -f2)
+OS       		= $(shell echo $(PLATFORM) | cut -d'/' -f1)
+ARCH     		= $(shell echo $(PLATFORM) | cut -d'/' -f2)
+DOCKER_PLATFORM = linux/$(ARCH)		# The DOCKER_PLATFORM variable is used to specify the target platform architecture on linux for Docker builds
 else
-ARCH     = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
 OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
+ARCH     = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
 endif
 
 build:
@@ -59,10 +60,10 @@ deps:
 
 # Build docker image
 docker-build: build
-ifdef PLATFORM
+ifdef DOCKER_PLATFORM
 	# Use buildx for multi-platform builds
-	@echo "Building multi-platform Docker image for $(PLATFORM)..."
-	$(DOCKER) buildx build --platform=$(PLATFORM) --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+	@echo "Building multi-platform Docker image for $(DOCKER_PLATFORM)..."
+	$(DOCKER) buildx build --platform=$(DOCKER_PLATFORM) --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
 else
 	$(DOCKER) build --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
 endif

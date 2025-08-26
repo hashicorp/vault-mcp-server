@@ -13,9 +13,6 @@ dist/
 coverage.txt
 coverage.html
 
-# Go module cache
-go.sum
-
 # IDE and editor files
 .vscode/
 .idea/
