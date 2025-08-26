@@ -24,14 +24,14 @@ all: build
 # Get local ARCH; on Intel Mac, 'uname -m' returns x86_64 which we turn into amd64.
 # Not using 'go env GOOS/GOARCH' here so 'make docker' will work without local Go install.
 # Always use CGO_ENABLED=0 to ensure a statically linked binary is built
-ifdef PLATFORM
-OS       		= $(shell echo $(PLATFORM) | cut -d'/' -f1)
-ARCH     		= $(shell echo $(PLATFORM) | cut -d'/' -f2)
-DOCKER_PLATFORM = linux/$(ARCH)		# The DOCKER_PLATFORM variable is used to specify the target platform architecture on linux for Docker builds
-else
 OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
 ARCH     = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
-endif
+
+# Allow overriding OS/ARCH via PLATFORM env var, e.g. "linux/amd64"
+# The DOCKER_PLATFORM variable is used to specify the target platform architecture on linux for Docker builds
+docker-xbuild: OS       		= $(shell echo $(PLATFORM) | cut -d'/' -f1)
+docker-xbuild: ARCH     		= $(shell echo $(PLATFORM) | cut -d'/' -f2)
+docker-xbuild: DOCKER_PLATFORM = linux/$(ARCH)
 
 build:
 	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/$(BASENAME)
@@ -60,13 +60,12 @@ deps:
 
 # Build docker image
 docker-build: build
-ifdef DOCKER_PLATFORM
+	$(DOCKER) build --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+
+docker-xbuild: build
 	# Use buildx for multi-platform builds
 	@echo "Building multi-platform Docker image for $(DOCKER_PLATFORM)..."
-	$(DOCKER) buildx build --platform=$(DOCKER_PLATFORM) --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
-else
-	$(DOCKER) build --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
-endif
+	$(DOCKER) buildx build --platform $(DOCKER_PLATFORM) --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
 
 docker-push: docker-build
 	$(DOCKER) push $(IMAGE_NAME)
