@@ -25,6 +25,7 @@ const (
 	VaultAddress       = "VAULT_ADDR"
 	VaultToken         = "VAULT_TOKEN"
 	VaultSkipTLSVerify = "VAULT_SKIP_VERIFY"
+	VaultHeaderToken   = "X-Vault-Token"
 )
 
 const DefaultVaultAddress = "http://127.0.0.1:8200"
