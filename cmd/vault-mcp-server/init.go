@@ -24,6 +24,7 @@ func init() {
 	// Add HTTP command flags (avoid 'h' shorthand conflict with help)
 	httpCmd.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
 	httpCmd.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
+	httpCmd.Flags().String("mcp-endpoint", "/mcp", "Path for streamable HTTP endpoint")
 
 	rootCmd.AddCommand(stdioCmd)
 	rootCmd.AddCommand(httpCmd)

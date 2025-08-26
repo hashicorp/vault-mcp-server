@@ -7,14 +7,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/vault-mcp-server/pkg/client"
-	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 	stdlog "log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
 	"github.com/hashicorp/vault-mcp-server/version"
 
@@ -80,61 +83,88 @@ var (
 			if err != nil {
 				stdlog.Fatal("Failed to get streamableHTTP host:", err)
 			}
-
-			if err := runHTTPServer(logger, host, port); err != nil {
+			endpointPath, err := cmd.Flags().GetString("mcp-endpoint")
+			if err != nil {
+				stdlog.Fatal("Failed to get endpoint path:", err)
+			}
+			if err := runHTTPServer(logger, host, port, endpointPath); err != nil {
 				stdlog.Fatal("failed to run streamableHTTP server:", err)
 			}
 		},
 	}
 )
 
-func runHTTPServer(logger *log.Logger, host string, port string) error {
+func runHTTPServer(logger *log.Logger, host string, port string, endpointPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	hcServer := NewServer(version.Version, logger)
 	tools.InitTools(hcServer, logger)
 
-	return httpServerInit(ctx, hcServer, logger, host, port)
+	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
 }
 
-func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger, host string, port string) error {
+func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger, host string, port string, endpointPath string) error {
+	// Ensure endpoint path starts with /
+	endpointPath = path.Join("/", endpointPath)
 	// Create StreamableHTTP server which implements the new streamable-http transport
 	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
-	streamableServer := server.NewStreamableHTTPServer(hcServer,
-		server.WithEndpointPath(DefaultEndPointPath), // Default MCP endpoint path
+	opts := []server.StreamableHTTPOption{
+		server.WithEndpointPath(endpointPath),
 		server.WithLogger(logger),
-	)
+	}
+
+	// Log the endpoint path being used
+	logger.Infof("Using endpoint path: %s", endpointPath)
+
+	// Create StreamableHTTP server which implements the new streamable-http transport
+	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
+	baseStreamableServer := server.NewStreamableHTTPServer(hcServer, opts...)
+
+	// Load CORS configuration
+	corsConfig := client.LoadCORSConfigFromEnv()
+
+	// Log CORS configuration
+	logger.Infof("CORS Mode: %s", corsConfig.Mode)
+	if len(corsConfig.AllowedOrigins) > 0 {
+		logger.Infof("Allowed Origins: %s", strings.Join(corsConfig.AllowedOrigins, ", "))
+	} else if corsConfig.Mode == "strict" {
+		logger.Warnf("No allowed origins configured in strict mode. All cross-origin requests will be rejected.")
+	} else if corsConfig.Mode == "development" {
+		logger.Infof("Development mode: localhost origins are automatically allowed")
+	} else if corsConfig.Mode == "disabled" {
+		logger.Warnf("CORS validation is disabled. This is not recommended for production.")
+	}
+
+	// Create a security wrapper around the streamable server
+	streamableServer := client.NewSecurityHandler(baseStreamableServer, corsConfig.AllowedOrigins, corsConfig.Mode, logger)
 
 	mux := http.NewServeMux()
 
-	// Handle the /mcp endpoint with the StreamableHTTP server
-	mux.Handle(DefaultEndPointPath, streamableServer)
-	mux.Handle(DefaultEndPointPath+"/", streamableServer)
+	// Apply middleware
+	streamableServer = client.VaultContextMiddleware(logger)(streamableServer)
+	streamableServer = client.LoggingMiddleware(logger)(streamableServer)
+
+	// Handle the /mcp endpoint with the streamable server (with security wrapper)
+	mux.Handle(endpointPath, streamableServer)
+	mux.Handle(endpointPath+"/", streamableServer)
 
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http"}`))
-		if err != nil {
-			logger.WithError(err).Error("Error writing to response on /health")
-		}
+		response := fmt.Sprintf(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http","endpoint":"%s"}`, endpointPath)
+		w.Write([]byte(response))
 	})
-
-	// Apply middleware stack
-	handler := client.CORSMiddleware()(mux)
-	handler = client.VaultContextMiddleware(logger)(handler)
-	handler = client.LoggingMiddleware(logger)(handler)
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           mux,
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 30 * time.Second,
 		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Minute, // Keep connections alive for 60 minutes
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Start server in goroutine
@@ -221,6 +251,7 @@ func main() {
 	if shouldUseHTTPMode() {
 		port := getHTTPPort()
 		host := getHTTPHost()
+		endpointPath := getEndpointPath(nil)
 
 		logFile, _ := rootCmd.PersistentFlags().GetString("log-file")
 		logger, err := initLogger(logFile)
@@ -228,7 +259,7 @@ func main() {
 			stdlog.Fatal("Failed to initialize logger:", err)
 		}
 
-		if err := runHTTPServer(logger, host, port); err != nil {
+		if err := runHTTPServer(logger, host, port, endpointPath); err != nil {
 			stdlog.Fatal("failed to run HTTP server:", err)
 		}
 		return
@@ -260,4 +291,21 @@ func getHTTPHost() string {
 		return host
 	}
 	return DefaultBindAddress
+}
+
+// Add function to get endpoint path from environment or flag
+func getEndpointPath(cmd *cobra.Command) string {
+	// First check environment variable
+	if envPath := os.Getenv("MCP_ENDPOINT"); envPath != "" {
+		return envPath
+	}
+
+	// Fall back to command line flag
+	if cmd != nil {
+		if path, err := cmd.Flags().GetString("mcp-endpoint"); err == nil && path != "" {
+			return path
+		}
+	}
+
+	return DefaultEndPointPath
 }

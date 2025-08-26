@@ -62,6 +62,10 @@ docker-push: docker-build
 run-http:
 	./$(BINARY_NAME) http --transport-port 8080
 
+# Run HTTP server with security settings
+run-http-secure:
+	MCP_ALLOWED_ORIGINS="http://localhost:3000,https://example.com" MCP_CORS_MODE="development" $(BINARY_NAME) http --transport-port 8080 --transport-host 0.0.0.0
+
 # Run HTTP server in Docker
 docker-run-http:
 	$(DOCKER) run -p 8080:8080 --rm $(IMAGE_NAME) ./$(BASENAME) http --transport-port 8080
@@ -94,6 +98,7 @@ help:
 	@echo "  deps           - Download dependencies"
 	@echo "  docker-build   - Build docker image"
 	@echo "  run-http       - Run StreamableHTTP server locally on port 8080"
+	@echo "  run-http-secure - Run StreamableHTTP server with security settings"
 	@echo "  docker-run-http - Run StreamableHTTP server in Docker on port 8080"
 	@echo "  test-http      - Test StreamableHTTP health endpoint"
 	@echo "  cleanup-test-containers - Stop and remove all test containers"
