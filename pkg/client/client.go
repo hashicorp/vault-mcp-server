@@ -46,6 +46,8 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 	config := api.DefaultConfig()
 	config.Address = vaultAddress
 
+	// Only skip TLS verification if explicitly requested
+	// Default to secure TLS verification for production safety
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: vaultSkipTLSVerify},
 	}

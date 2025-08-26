@@ -1,13 +1,61 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Go test files
+*.test
+*.prof
+coverage.txt
+coverage.html
+
+# Go module cache
+go.sum
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
 .DS_Store
-.cursor
-.idea
-.git
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git
+.git/
 .gitignore
+
+# Docker
+Dockerfile*
 .dockerignore
-Dockerfile
 
-*.log
-
-.github
-
+# Documentation
 README.md
+CHANGELOG.md
+CODEOWNERS
+LICENSE
+
+# Development and testing
+e2e/
+scripts/
+scan.hcl
+
+# Helm charts (not needed in container)
+helm/
+
+# Version files (may want to keep these)
+# version/
+
+# Logs
+*.log

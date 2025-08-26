@@ -24,8 +24,14 @@ all: build
 # Get local ARCH; on Intel Mac, 'uname -m' returns x86_64 which we turn into amd64.
 # Not using 'go env GOOS/GOARCH' here so 'make docker' will work without local Go install.
 # Always use CGO_ENABLED=0 to ensure a statically linked binary is built
+ifdef PLATFORM
+OS       = $(shell echo $(PLATFORM) | cut -d'/' -f1)
+ARCH     = $(shell echo $(PLATFORM) | cut -d'/' -f2)
+else
 ARCH     = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
 OS       = $(shell uname | tr [[:upper:]] [[:lower:]])
+endif
+
 build:
 	CGO_ENABLED=0 GOARCH=$(ARCH) GOOS=$(OS) $(GO) build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/$(BASENAME)
 
@@ -52,8 +58,14 @@ deps:
 	$(GO) mod download
 
 # Build docker image
-docker-build:
-	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+docker-build: build
+ifdef PLATFORM
+	# Use buildx for multi-platform builds
+	@echo "Building multi-platform Docker image for $(PLATFORM)..."
+	$(DOCKER) buildx build --platform=$(PLATFORM) --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+else
+	$(DOCKER) build --no-cache --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+endif
 
 docker-push: docker-build
 	$(DOCKER) push $(IMAGE_NAME)
