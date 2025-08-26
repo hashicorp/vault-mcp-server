@@ -37,7 +37,7 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 					// Explicitly disallow VaultToken in query parameters for security reasons
 					if (header == VaultToken || header == VaultHeaderToken) && headerValue != "" {
 						logger.Info(fmt.Sprintf("Vault token was provided in query parameters by client %v, terminating request", r.RemoteAddr))
-						http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the vault_token header", http.StatusBadRequest)
+						http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the X-Vault-Token header", http.StatusBadRequest)
 						return
 					}
 				}
