@@ -75,9 +75,8 @@ The server can be configured using environment variables:
 
 In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
 
-1. **HTTP Headers**: `VAULT_ADDR` and `VAULT_TOKEN` headers
-2. **Query Parameters**: `?VAULT_ADDR=...&VAULT_TOKEN=...`
-3. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
+1. **HTTP Headers**: `VAULT_ADDR` and `X-Vault-Token` or `VAULT_TOKEN` headers
+2. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
 
 ### Middleware Stack
 
@@ -106,7 +105,7 @@ The HTTP server includes a comprehensive middleware stack:
         "MCP Server Vault": {
           "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
           "headers": {
-            "VAULT_TOKEN": "${input:vault-token}"
+            "X-Vault-Token": "${input:vault-token}"
           }
         }
       }
