@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -19,4 +20,13 @@ func ExtractMountPath(args map[string]any) (string, error) {
 
 func ToBoolPtr(b bool) *bool {
 	return &b
+}
+
+// SanitizeOrigin returns the scheme and hostname from an origin string, or the original string if invalid
+func SanitizeOrigin(origin string) string {
+	parsedURL, err := url.Parse(origin)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return origin
+	}
+	return fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Hostname())
 }

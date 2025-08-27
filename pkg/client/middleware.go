@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -98,7 +99,7 @@ func (h *securityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	if origin != "" {
 		if !isOriginAllowed(origin, h.allowedOrigins, h.corsMode) {
-			h.logger.Warnf("Rejected request from unauthorized origin: %s (CORS mode: %s)", origin, h.corsMode)
+			h.logger.Warnf("Rejected request from unauthorized origin: %s (CORS mode: %s)", utils.SanitizeOrigin(origin), h.corsMode)
 			http.Error(w, "Origin not allowed", http.StatusForbidden)
 			return
 		}
