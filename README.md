@@ -1,9 +1,14 @@
-# Vault MCP Server
+# <img src="public/images/Vault-LogoMark_onDark.svg" width="30" align="left" style="margin-right: 12px;"/> Vault MCP Server
 
-A Model Context Protocol (MCP) server that provides integration with HashiCorp
+The Vault MCP Server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction)
+server implementation that provides integration with HashiCorp
 Vault for managing secrets and mounts. This server uses both stdio and StreamableHTTP
 transports for MCP communication, making it compatible with Claude for Desktop 
 and other MCP clients.
+
+> **Caution:** The outputs and recommendations provided by the MCP server are generated dynamically and may vary based on the query, model, and the connected MCP server. Users should **thoroughly review all outputs/recommendations** to ensure they align with their organization's **security best practices**, **cost-efficiency goals**, and **compliance requirements** before implementation.
+
+> **Security Note:** When using the StreamableHTTP transport in production, always configure the `MCP_ALLOWED_ORIGINS` environment variable to restrict access to trusted origins only. This helps prevent DNS rebinding attacks and other cross-origin vulnerabilities.
 
 ## Features
 
@@ -62,14 +67,16 @@ The server can be configured using environment variables:
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
+- `MCP_ENDPOINT`: HTTP server endpoint path (default: `/mcp`)
+- `MCP_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS (default: `""`)
+- `MCP_CORS_MODE`: CORS mode: `strict`, `development`, or `disabled` (default: `strict`)
 
 ## HTTP Mode Configuration
 
 In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
 
-1. **HTTP Headers**: `VAULT_ADDR` and `VAULT_TOKEN` headers
-2. **Query Parameters**: `?VAULT_ADDR=...&VAULT_TOKEN=...`
-3. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
+1. **HTTP Headers**: `VAULT_ADDR` and `X-Vault-Token`
+2. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
 
 ### Middleware Stack
 
@@ -98,7 +105,7 @@ The HTTP server includes a comprehensive middleware stack:
         "MCP Server Vault": {
           "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
           "headers": {
-            "VAULT_TOKEN": "${input:vault-token}"
+            "X-Vault-Token": "${input:vault-token}"
           }
         }
       }
