@@ -155,7 +155,7 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		w.WriteHeader(http.StatusOK)
 		response := fmt.Sprintf(`{"status":"ok","service":"vault-mcp-server","transport":"streamable-http","endpoint":"%s"}`, endpointPath)
 		if _, err := w.Write([]byte(response)); err != nil {
-			log.WithError(err).Error("Failed to write health check response")
+			logger.WithError(err).Error("Failed to write health check response")
 		}
 	})
 

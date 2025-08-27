@@ -22,11 +22,18 @@ func ToBoolPtr(b bool) *bool {
 	return &b
 }
 
-// SanitizeOrigin returns the scheme and hostname from an origin string, or the original string if invalid
+// SanitizeOrigin returns the scheme, hostname, and port from an origin string, or the original string if invalid
 func SanitizeOrigin(origin string) string {
 	parsedURL, err := url.Parse(origin)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
 		return origin
 	}
-	return fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Hostname())
+	host := parsedURL.Host
+	// If host does not contain port, but parsedURL.Port() is set, append it
+	if parsedURL.Port() == "" && strings.Contains(host, ":") {
+		// host already contains port
+	} else if parsedURL.Port() != "" && !strings.Contains(host, ":") {
+		host = fmt.Sprintf("%s:%s", parsedURL.Hostname(), parsedURL.Port())
+	}
+	return fmt.Sprintf("%s://%s", parsedURL.Scheme, host)
 }
