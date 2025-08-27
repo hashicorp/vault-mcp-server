@@ -75,7 +75,7 @@ The server can be configured using environment variables:
 
 In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
 
-1. **HTTP Headers**: `VAULT_ADDR` and `X-Vault-Token` or `VAULT_TOKEN` headers
+1. **HTTP Headers**: `VAULT_ADDR` and `X-Vault-Token`
 2. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
 
 ### Middleware Stack
