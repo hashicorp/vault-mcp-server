@@ -30,12 +30,14 @@ func TestVaultContextMiddleware(t *testing.T) {
 		{
 			name: "headers take precedence",
 			headers: map[string]string{
-				"VAULT_ADDR":  "http://header-vault:8200",
-				"VAULT_TOKEN": "header-token",
+				"VAULT_ADDR":        "http://header-vault:8200",
+				"VAULT_TOKEN":       "header-token",
+				"X-Vault-Namespace": "header-namespace",
 			},
 			queryParams: map[string]string{
-				"VAULT_ADDR":  "http://query-vault:8200",
-				"VAULT_TOKEN": "query-token",
+				"VAULT_ADDR":      "http://query-vault:8200",
+				"VAULT_TOKEN":     "query-token",
+				"VAULT_NAMESPACE": "query-namespace",
 			},
 			expectedAddr:     "http://header-vault:8200",
 			expectedToken:    "header-token",
@@ -54,8 +56,9 @@ func TestVaultContextMiddleware(t *testing.T) {
 		{
 			name: "environment variables as fallback",
 			envVars: map[string]string{
-				"VAULT_ADDR":  "http://env-vault:8200",
-				"VAULT_TOKEN": "env-token",
+				"VAULT_ADDR":      "http://env-vault:8200",
+				"VAULT_TOKEN":     "env-token",
+				"VAULT_NAMESPACE": "env-namespace",
 			},
 			expectedAddr:     "http://env-vault:8200",
 			expectedToken:    "env-token",
@@ -85,12 +88,25 @@ func TestVaultContextMiddleware(t *testing.T) {
 					token = ""
 				}
 
+				namespace, ok := ctx.Value(contextKey(VaultNamespace)).(string)
+				if !ok {
+					namespace = ""
+				}
+
 				if addr != tt.expectedAddr {
 					t.Errorf("Expected VAULT_ADDR %s, got %s", tt.expectedAddr, addr)
 				}
 
 				if token != tt.expectedToken {
 					t.Errorf("Expected VAULT_TOKEN %s, got %s", tt.expectedToken, token)
+				}
+
+				// Check namespace if provided in test data
+				if tt.headers["X-Vault-Namespace"] != "" && namespace != tt.headers["X-Vault-Namespace"] {
+					t.Errorf("Expected VAULT_NAMESPACE %s, got %s", tt.headers["X-Vault-Namespace"], namespace)
+				}
+				if tt.envVars["VAULT_NAMESPACE"] != "" && namespace != tt.envVars["VAULT_NAMESPACE"] {
+					t.Errorf("Expected VAULT_NAMESPACE %s, got %s", tt.envVars["VAULT_NAMESPACE"], namespace)
 				}
 
 				w.WriteHeader(http.StatusOK)
@@ -460,6 +476,18 @@ func TestVaultContextMiddleware_SecurityLogging(t *testing.T) {
 		// Note: In a real test, you'd capture the log output and verify it contains
 		// "Vault address configured via request context"
 	})
+
+	t.Run("namespace provided via header is logged", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/mcp", nil)
+		req.Header.Set(VaultHeaderNamespace, "test-namespace")
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		// Note: In a real test, you'd capture the log output and verify it contains
+		// "Vault namespace configured via request context"
+	})
 }
 
 // TestVaultContextMiddleware_EdgeCases tests edge cases and error conditions
@@ -552,10 +580,12 @@ func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 			addr := ctx.Value(contextKey(VaultAddress))
 			token := ctx.Value(contextKey(VaultToken))
 			skipVerify := ctx.Value(contextKey(VaultSkipTLSVerify))
+			namespace := ctx.Value(contextKey(VaultNamespace))
 
 			assert.Equal(t, "https://vault.example.com:8200", addr)
 			assert.Equal(t, "test-token", token)
 			assert.Equal(t, "true", skipVerify)
+			assert.Equal(t, "test-namespace", namespace)
 
 			w.WriteHeader(http.StatusOK)
 		})
@@ -567,6 +597,7 @@ func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 		req.Header.Set(VaultAddress, "https://vault.example.com:8200")
 		req.Header.Set(VaultToken, "test-token")
 		req.Header.Set(VaultSkipTLSVerify, "true")
+		req.Header.Set(VaultHeaderNamespace, "test-namespace")
 
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
@@ -578,9 +609,11 @@ func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 		// Set environment variables
 		os.Setenv(VaultAddress, "https://env-vault.example.com:8200")
 		os.Setenv(VaultToken, "env-token")
+		os.Setenv(VaultNamespace, "env-namespace")
 		defer func() {
 			os.Unsetenv(VaultAddress)
 			os.Unsetenv(VaultToken)
+			os.Unsetenv(VaultNamespace)
 		}()
 
 		mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -588,9 +621,11 @@ func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 
 			addr := ctx.Value(contextKey(VaultAddress))
 			token := ctx.Value(contextKey(VaultToken))
+			namespace := ctx.Value(contextKey(VaultNamespace))
 
 			assert.Equal(t, "https://env-vault.example.com:8200", addr)
 			assert.Equal(t, "env-token", token)
+			assert.Equal(t, "env-namespace", namespace)
 
 			w.WriteHeader(http.StatusOK)
 		})

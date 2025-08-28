@@ -110,7 +110,7 @@ func (h *securityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Max-Age", "3600")
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, VAULT_ADDR, VAULT_TOKEN")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, VAULT_ADDR, X-Vault-Token, X-Vault-Namespace")
 	}
 
 	// Handle OPTIONS requests for CORS preflight
@@ -171,6 +171,17 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 						logger.Debug("Vault address configured via request context")
 					}
 				}
+			}
+
+			// Handle namespace separately - only X-Vault-Namespace header or VAULT_NAMESPACE env var
+			namespaceValue := r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultHeaderNamespace))
+			if namespaceValue == "" {
+				namespaceValue = getEnv(VaultNamespace, "")
+			}
+
+			if namespaceValue != "" {
+				ctx = context.WithValue(ctx, contextKey(VaultNamespace), namespaceValue)
+				logger.Debug("Vault namespace configured via request context")
 			}
 
 			// Call the next handler with the enriched context
