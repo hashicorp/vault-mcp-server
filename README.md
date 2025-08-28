@@ -64,6 +64,7 @@ The server can be configured using environment variables:
 
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
 - `VAULT_TOKEN`: Vault authentication token (required)
+- `VAULT_NAMESPACE`: Vault namespace (optional)
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
@@ -75,8 +76,9 @@ The server can be configured using environment variables:
 
 In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
 
-1. **HTTP Headers**: `VAULT_ADDR` and `X-Vault-Token`
-2. **Environment Variables**: Standard `VAULT_ADDR` and `VAULT_TOKEN` env vars
+- **HTTP Query**: `VAULT_ADDR`
+- **HTTP Headers**: `VAULT_ADDR`, `X-Vault-Token`, and `X-Vault-Namespace`
+- **Environment Variables**: Standard `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_NAMESPACE` env vars
 
 ### Middleware Stack
 
@@ -99,13 +101,20 @@ The HTTP server includes a comprehensive middleware stack:
           "id": "vault-token",
           "description": "Vault Token",
           "password": true
+        },
+        {
+          "type": "promptString",
+          "id": "vault-namespace",
+          "description": "Vault Namespace (optional)",
+          "password": false
         }
       ],
       "servers": {
         "MCP Server Vault": {
           "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
           "headers": {
-            "X-Vault-Token": "${input:vault-token}"
+            "X-Vault-Token": "${input:vault-token}",
+            "X-Vault-Namespace": "${input:vault-namespace}"
           }
         }
       }
