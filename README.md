@@ -6,7 +6,7 @@ Vault for managing secrets and mounts. This server uses both stdio and Streamabl
 transports for MCP communication, making it compatible with Claude for Desktop 
 and other MCP clients.
 
-> **Security Note:** At this stage, the MCP server is intended for local use only. If using the StreamableHTTP transport in production, always configure the MCP_ALLOWED_ORIGINS environment variable to restrict access to trusted origins only. This helps prevent DNS rebinding attacks and other cross-origin vulnerabilities.
+> **Security Note:** At this stage, the MCP server is intended for local use only. If using the StreamableHTTP transport, always configure the MCP_ALLOWED_ORIGINS environment variable to restrict access to trusted origins only. This helps prevent DNS rebinding attacks and other cross-origin vulnerabilities.
 
 > **Security Note:** Depending on the query, the MCP server may expose certain Vault data, including Vault secrets, to the MCP client and LLM. Do not use the MCP server with untrusted MCP clients or LLMs.
 
