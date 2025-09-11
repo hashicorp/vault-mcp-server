@@ -7,3 +7,4 @@ FEATURES
 - Support for Vault secret operations (read, write, list)
 - Docker support
 - Basic HTTP & STDIO transport support
+- TLS support

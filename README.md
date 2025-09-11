@@ -71,6 +71,8 @@ The server can be configured using environment variables:
 - `MCP_ENDPOINT`: HTTP server endpoint path (default: `/mcp`)
 - `MCP_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS (default: `""`)
 - `MCP_CORS_MODE`: CORS mode: `strict`, `development`, or `disabled` (default: `strict`)
+- `MCP_TLS_CERT_FILE`: Location of the TLS certificate file (e.g. `/path/to/cert.pem`) (default: `""`)
+- `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
 
 ## HTTP Mode Configuration
 

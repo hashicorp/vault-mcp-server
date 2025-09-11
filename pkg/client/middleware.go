@@ -205,3 +205,23 @@ func LoggingMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+type TLSConfig struct {
+	CertFile string
+	KeyFile  string
+}
+
+// GetTLSConfigFromEnv loads TLS cert/key file paths from environment variables
+func GetTLSConfigFromEnv() *TLSConfig {
+	certFile := os.Getenv("MCP_TLS_CERT_FILE")
+	keyFile := os.Getenv("MCP_TLS_KEY_FILE")
+
+	if certFile == "" || keyFile == "" {
+		return nil
+	}
+
+	return &TLSConfig{
+		CertFile: certFile,
+		KeyFile:  keyFile,
+	}
+}
