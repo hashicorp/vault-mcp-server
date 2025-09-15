@@ -73,6 +73,8 @@ The server can be configured using environment variables:
 - `MCP_CORS_MODE`: CORS mode: `strict`, `development`, or `disabled` (default: `strict`)
 - `MCP_TLS_CERT_FILE`: Location of the TLS certificate file (e.g. `/path/to/cert.pem`) (default: `""`)
 - `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
+- `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
+- `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
 
 ## HTTP Mode Configuration
 
