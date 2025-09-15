@@ -6,6 +6,7 @@ package client
 import (
 	"crypto/tls"
 	"os"
+	"strings"
 )
 
 type TLSConfig struct {
@@ -46,4 +47,13 @@ func GetTLSConfigFromEnv() *TLSConfig {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}
+}
+
+func IsLocalHost(host string) bool {
+	h := strings.ToLower(host)
+	return h == "localhost" ||
+		h == "127.0.0.1" ||
+		h == "::1" ||
+		h == "[::1]" ||
+		h == "0.0.0.0"
 }

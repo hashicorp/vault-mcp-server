@@ -178,6 +178,10 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	if tlsConfig != nil {
 		httpServer.TLSConfig = tlsConfig.Config
 		logger.Infof("TLS enabled on StreamableHTTP server")
+	} else {
+		if !client.IsLocalHost(host) {
+			return fmt.Errorf("TLS disabled on StreamableHTTP server; non-localhost binding is not allowed for production")
+		}
 	}
 
 	// Start server in goroutine
