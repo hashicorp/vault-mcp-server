@@ -5,6 +5,7 @@ package client
 
 import (
 	"crypto/tls"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -16,12 +17,38 @@ type TLSConfig struct {
 }
 
 // GetTLSConfigFromEnv loads TLS cert/key file paths from environment variables
-func GetTLSConfigFromEnv() *TLSConfig {
+func GetTLSConfigFromEnv() (*TLSConfig, error) {
 	certFile := os.Getenv("MCP_TLS_CERT_FILE")
 	keyFile := os.Getenv("MCP_TLS_KEY_FILE")
 
-	if certFile == "" || keyFile == "" {
-		return nil
+	if certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+
+	if certFile == "" {
+		return nil, fmt.Errorf("MCP_TLS_CERT_FILE is required when MCP_TLS_KEY_FILE is set")
+	}
+
+	if keyFile == "" {
+		return nil, fmt.Errorf("MCP_TLS_KEY_FILE is required when MCP_TLS_CERT_FILE is set")
+	}
+
+	// Validate certificate files exist and are readable
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("TLS certificate file does not exist: %s", certFile)
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot access TLS certificate file %s: %w", certFile, err)
+	}
+
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("TLS key file does not exist: %s", keyFile)
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot access TLS key file %s: %w", keyFile, err)
+	}
+
+	// Validate certificate and key can be loaded
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return nil, fmt.Errorf("invalid TLS certificate/key pair: %w", err)
 	}
 
 	tlsConfig := &tls.Config{
@@ -46,7 +73,7 @@ func GetTLSConfigFromEnv() *TLSConfig {
 		Config:   tlsConfig,
 		CertFile: certFile,
 		KeyFile:  keyFile,
-	}
+	}, nil
 }
 
 func IsLocalHost(host string) bool {
