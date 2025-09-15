@@ -71,6 +71,8 @@ The server can be configured using environment variables:
 - `MCP_ENDPOINT`: HTTP server endpoint path (default: `/mcp`)
 - `MCP_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS (default: `""`)
 - `MCP_CORS_MODE`: CORS mode: `strict`, `development`, or `disabled` (default: `strict`)
+- `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
+- `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
 
 ## HTTP Mode Configuration
 
