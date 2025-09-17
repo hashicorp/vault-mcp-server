@@ -21,13 +21,19 @@ func init() {
 	rootCmd.SetVersionTemplate("{{.Short}}\n{{.Version}}\n")
 	rootCmd.PersistentFlags().String("log-file", "", "Path to log file")
 
-	// Add HTTP command flags (avoid 'h' shorthand conflict with help)
-	httpCmd.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
-	httpCmd.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
-	httpCmd.Flags().String("mcp-endpoint", "/mcp", "Path for streamable HTTP endpoint")
+	// Add StreamableHTTP command flags (avoid 'h' shorthand conflict with help)
+	streamableHTTPCmd.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
+	streamableHTTPCmd.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
+	streamableHTTPCmd.Flags().String("mcp-endpoint", DefaultEndPointPath, "Path for streamable HTTP endpoint")
+
+	// Add the same flags to the alias command for backward compatibility
+	httpCmdAlias.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
+	httpCmdAlias.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
+	httpCmdAlias.Flags().String("mcp-endpoint", DefaultEndPointPath, "Path for streamable HTTP endpoint")
 
 	rootCmd.AddCommand(stdioCmd)
-	rootCmd.AddCommand(httpCmd)
+	rootCmd.AddCommand(streamableHTTPCmd)
+	rootCmd.AddCommand(httpCmdAlias) // Add the alias for backward compatibility
 }
 
 func initConfig() {

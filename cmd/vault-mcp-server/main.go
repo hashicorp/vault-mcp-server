@@ -61,10 +61,12 @@ var (
 		},
 	}
 
-	httpCmd = &cobra.Command{
-		Use:   "http",
+	streamableHTTPCmd = &cobra.Command{
+		Use:   "streamable-http",
 		Short: "Start StreamableHTTP server",
-		Long:  fmt.Sprintf("Start a server that communicates via StreamableHTTP transport on port %s at %s endpoint.", DefaultBindPort, DefaultEndPointPath),
+		Long: `Start a server that communicates using the StreamableHTTP transport.
+This mode allows clients to interact with the Vault MCP server over HTTP.
+You can specify the host, port, and endpoint path to customize where the server listens.`,
 		Run: func(cmd *cobra.Command, _ []string) {
 			logFile, err := rootCmd.PersistentFlags().GetString("log-file")
 			if err != nil {
@@ -83,13 +85,27 @@ var (
 			if err != nil {
 				stdlog.Fatal("Failed to get streamableHTTP host:", err)
 			}
+
 			endpointPath, err := cmd.Flags().GetString("mcp-endpoint")
 			if err != nil {
 				stdlog.Fatal("Failed to get endpoint path:", err)
 			}
+
 			if err := runHTTPServer(logger, host, port, endpointPath); err != nil {
 				stdlog.Fatal("failed to run streamableHTTP server:", err)
 			}
+		},
+	}
+
+	// Create an alias for backward compatibility
+	httpCmdAlias = &cobra.Command{
+		Use:        "http",
+		Short:      "Start StreamableHTTP server (deprecated, use 'streamable-http' instead)",
+		Long:       `This command is deprecated. Please use 'streamable-http' instead.`,
+		Deprecated: "Use 'streamable-http' instead",
+		Run: func(cmd *cobra.Command, args []string) {
+			// Forward to the new command
+			streamableHTTPCmd.Run(cmd, args)
 		},
 	}
 )
@@ -191,7 +207,7 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	// Start server in goroutine
 	errC := make(chan error, 1)
 	go func() {
-		logger.Infof("Starting StreamableHTTP server on %s%s", addr, DefaultEndPointPath)
+		logger.Infof("Starting StreamableHTTP server on %s%s", addr, endpointPath)
 		errC <- httpServer.ListenAndServe()
 	}()
 
@@ -300,7 +316,11 @@ func main() {
 
 // shouldUseHTTPMode checks if environment variables indicate HTTP mode
 func shouldUseHTTPMode() bool {
-	return os.Getenv("TRANSPORT_MODE") == "http" || os.Getenv("TRANSPORT_PORT") != ""
+	transportMode := os.Getenv("TRANSPORT_MODE")
+	return transportMode == "http" || transportMode == "streamable-http" ||
+		os.Getenv("TRANSPORT_PORT") != "" ||
+		os.Getenv("TRANSPORT_HOST") != "" ||
+		os.Getenv("MCP_ENDPOINT") != ""
 }
 
 // getHTTPPort returns the port from environment variables or default
