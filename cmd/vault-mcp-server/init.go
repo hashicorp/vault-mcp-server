@@ -22,14 +22,14 @@ func init() {
 	rootCmd.PersistentFlags().String("log-file", "", "Path to log file")
 
 	// Add StreamableHTTP command flags (avoid 'h' shorthand conflict with help)
-	streamableHTTPCmd.Flags().String("transport-host", "127.0.0.1", "Host to bind to")
-	streamableHTTPCmd.Flags().StringP("transport-port", "p", "8080", "Port to listen on")
-	streamableHTTPCmd.Flags().String("mcp-endpoint", "/mcp", "Path for streamable HTTP endpoint")
+	streamableHTTPCmd.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
+	streamableHTTPCmd.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
+	streamableHTTPCmd.Flags().String("mcp-endpoint", DefaultEndPointPath, "Path for streamable HTTP endpoint")
 
 	// Add the same flags to the alias command for backward compatibility
-	httpCmdAlias.Flags().String("transport-host", "127.0.0.1", "Host to bind to")
-	httpCmdAlias.Flags().StringP("transport-port", "p", "8080", "Port to listen on")
-	httpCmdAlias.Flags().String("mcp-endpoint", "/mcp", "Path for streamable HTTP endpoint")
+	httpCmdAlias.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
+	httpCmdAlias.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
+	httpCmdAlias.Flags().String("mcp-endpoint", DefaultEndPointPath, "Path for streamable HTTP endpoint")
 
 	rootCmd.AddCommand(stdioCmd)
 	rootCmd.AddCommand(streamableHTTPCmd)

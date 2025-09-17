@@ -64,7 +64,9 @@ var (
 	streamableHTTPCmd = &cobra.Command{
 		Use:   "streamable-http",
 		Short: "Start StreamableHTTP server",
-		Long:  `Start a server that communicates via StreamableHTTP transport on port specified port at /mcp endpoint.`,
+		Long: `Start a server that communicates using the StreamableHTTP transport.
+This mode allows clients to interact with the Vault MCP server over HTTP.
+You can specify the host, port, and endpoint path to customize where the server listens.`,
 		Run: func(cmd *cobra.Command, _ []string) {
 			logFile, err := rootCmd.PersistentFlags().GetString("log-file")
 			if err != nil {
