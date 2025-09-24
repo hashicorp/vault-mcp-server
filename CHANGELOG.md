@@ -1,3 +1,12 @@
+## 0.2.0
+
+FEATURES
+
+- Support for Vault PKI operations (create, list, read, delete)
+- Comprehensive HTTP middleware stack (CORS, TLS, logging, Vault context, rate limiting)
+- Session-based Vault client management
+- Structured logging with configurable output
+
 ## 0.1.0
 
 FEATURES
@@ -7,4 +16,3 @@ FEATURES
 - Support for Vault secret operations (read, write, list)
 - Docker support
 - Basic HTTP & STDIO transport support
-- TLS support
