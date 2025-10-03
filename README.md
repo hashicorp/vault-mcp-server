@@ -98,40 +98,90 @@ The HTTP server includes a comprehensive middleware stack:
 
 ## Integration with Visual Studio Code
 
-
 1. In your project workspace root, create or open the `.vscode/mcp.json` configuration file. Alternatively, to add an MCP to your user configuration, run the `MCP: Open User Configuration` command, which opens the mcp.json file in your user profile. If the file does not exist, VS Code creates it for you.
 
+    <table>
+    <tr><th>Streamable HTTP mode</th><th>Stdio mode</th></tr>
+    <tr valign=top>
+    <td>
+
     ```json
-    {
-      "inputs": [
         {
-          "type": "promptString",
-          "id": "vault-token",
-          "description": "Vault Token",
-          "password": true
-        },
-        {
-          "type": "promptString",
-          "id": "vault-namespace",
-          "description": "Vault Namespace (optional)",
-          "password": false
+            "inputs": [
+            {
+                "type": "promptString",
+                "id": "vault_token",
+                "description": "Vault Token",
+                "password": true
+            },
+            {
+                "type": "promptString",
+                "id": "vault_namespace",
+                "description": "Vault Namespace (optional)",
+                "password": false
+            }
+            ],
+            "servers": {
+                "vault-mcp-server": {
+                    "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
+                    "headers": {
+                        "X-Vault-Token": "${input:vault_token}",
+                        "X-Vault-Namespace": "${input:vault_namespace}"
+                    }
+                }
+            }
         }
-      ],
-      "servers": {
-        "MCP Server Vault": {
-          "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
-          "headers": {
-            "X-Vault-Token": "${input:vault-token}",
-            "X-Vault-Namespace": "${input:vault-namespace}"
-          }
-        }
-      }
-    }
     ```
 
-2. Save `mcp.json` file.
+    </td>
+    <td>
 
-3. Restart Visual Studio Code (or reload the window).
+    ```json
+        {
+            "inputs": [
+            {
+                "type": "promptString",
+                "id": "vault_token",
+                "description": "Vault Token",
+                "password": true
+            },
+            {
+                "type": "promptString",
+                "id": "vault_namespace",
+                "description": "Vault Namespace (optional)",
+                "password": false
+            },
+            {
+                "type": "promptString",
+                "id": "vault_addr",
+                "description": "Vault Address (optional)",
+                "password": false
+            }
+            ],
+            "servers": {
+            "vault-mcp-server": {
+                "command": "docker",
+                "args": [
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e", "VAULT_ADDR=${input:vault_addr}",
+                    "-e", "VAULT_TOKEN=${input:vault_token}",
+                    "-e", "VAULT_NAMESPACE=${input:vault_namespace}",
+                    "hashicorp/vault-mcp-server"
+                    ]
+                }
+            }
+        }
+    ```
+
+    </td>
+    </tr>
+    </table>
+
+1. Save `mcp.json` file.
+
+1. Restart Visual Studio Code (or reload the window).
 
 **Note:** Visual Studio Code will prompt you for the VAULT_TOKEN once and store it securely in the client.
 
