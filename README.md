@@ -135,6 +135,26 @@ The HTTP server includes a comprehensive middleware stack:
 
 **Note:** Visual Studio Code will prompt you for the VAULT_TOKEN once and store it securely in the client.
 
+## Integration with Gemini extensions
+
+
+For security, avoid hardcoding your credentials, create or update `~/.gemini/.env` (where ~ is your home or project directory) for storing Vault Address, Token and Namespace
+
+```
+# ~/.gemini/.env
+VAULT_ADDR=your_vault_addr_here
+VAULT_TOKEN=your_vault_token_here
+VAULT_NAMESPACE=your_vault_namespace_here
+```
+
+Install the extension & run Gemini
+
+```
+gemini extensions install https://github.com/hashicorp/vault-mcp-server
+gemini
+```
+
+
 ## Working with Docker
 
 Build the docker image:
