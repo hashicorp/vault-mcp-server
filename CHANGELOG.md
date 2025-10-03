@@ -2,7 +2,7 @@
 
 FEATURES
 
-* Adding Gemini extension. See [56](https://github.com/hashicorp/terraform-mcp-server/pull/56)
+* Adding Gemini extension. See [56](https://github.com/hashicorp/vault-mcp-server/pull/56)
 
 ## 0.2.0
 
