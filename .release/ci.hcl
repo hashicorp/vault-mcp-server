@@ -8,7 +8,7 @@ project "vault-mcp-server" {
 
   # slack channel : feed-vault-mcp-server-releases
   slack {
-    notification_channel = "C095170JF0C"
+    notification_channel = "C09L03WD5R8"
   }
 
   github {
