@@ -80,8 +80,8 @@ TEMP_FILE=$(mktemp)
 # Update version field and terraform-mcp-server references
 sed -E \
     -e 's/"version": *"[^"]*"/"version": "'"$NEW_VERSION"'"/g' \
-    -e 's/(^|[^a-zA-Z0-9.-])terraform-mcp-server:[^"[:space:]]*/\1terraform-mcp-server:'"$NEW_VERSION"'/g' \
-    -e 's/(docker\.io\/)?hashicorp\/terraform-mcp-server:[^"[:space:]]*/\1hashicorp\/terraform-mcp-server:'"$NEW_VERSION"'/g' \
+    -e 's/(^|[^a-zA-Z0-9.-])vault-mcp-server:[^"[:space:]]*/\1vault-mcp-server:'"$NEW_VERSION"'/g' \
+    -e 's/(docker\.io\/)?hashicorp\/vault-mcp-server:[^"[:space:]]*/\1hashicorp\/vault-mcp-server:'"$NEW_VERSION"'/g' \
     "$JSON_FILE" > "$TEMP_FILE"
 
 # Move the temporary file back to the original
