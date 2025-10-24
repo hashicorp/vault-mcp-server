@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # This script updates:
 # 1. "version": "<version>" fields
-# 2. terraform-mcp-server:<version> references
+# 2. vault-mcp-server:<version> references
 #
 # Arguments:
 #   json-file-path: Path to the JSON file to update
@@ -71,13 +71,13 @@ echo "Created backup: $BACKUP_FILE"
 # Use sed to update version references
 # Patterns updated:
 # 1. "version": "<any-version>" -> "version": "<new-version>"
-# 2. hashicorp/terraform-mcp-server:<any-version> -> hashicorp/terraform-mcp-server:<new-version>
-# 3. docker.io/hashicorp/terraform-mcp-server:<any-version> -> docker.io/hashicorp/terraform-mcp-server:<new-version>
+# 2. hashicorp/vault-mcp-server:<any-version> -> hashicorp/vault-mcp-server:<new-version>
+# 3. docker.io/hashicorp/vault-mcp-server:<any-version> -> docker.io/hashicorp/vault-mcp-server:<new-version>
 
 # For macOS compatibility, we'll use a temporary file approach
 TEMP_FILE=$(mktemp)
 
-# Update version field and terraform-mcp-server references
+# Update version field and vault-mcp-server references
 sed -E \
     -e 's/"version": *"[^"]*"/"version": "'"$NEW_VERSION"'"/g' \
     -e 's/(^|[^a-zA-Z0-9.-])vault-mcp-server:[^"[:space:]]*/\1vault-mcp-server:'"$NEW_VERSION"'/g' \
@@ -93,4 +93,4 @@ echo "Changed version references to: $NEW_VERSION"
 # Show what was changed (optional verification)
 echo ""
 echo "Updated references found:"
-grep -E '"version": *"[^"]*"|(docker\.io\/)?hashicorp\/terraform-mcp-server:[^"[:space:]]*' "$JSON_FILE" | sed 's/^/  /'
+grep -E '"version": *"[^"]*"|(docker\.io\/)?hashicorp\/vault-mcp-server:[^"[:space:]]*' "$JSON_FILE" | sed 's/^/  /'

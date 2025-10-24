@@ -37,17 +37,17 @@ for json_file in "${JSON_FILES[@]}"; do
     fi
 done
 
-# Check terraform-mcp-server:<version> occurrences in JSON files only
-echo "Checking terraform-mcp-server:<version> occurrences in JSON files..."
+# Check vault-mcp-server:<version> occurrences in JSON files only
+echo "Checking vault-mcp-server:<version> occurrences in JSON files..."
 echo ""
-DOCKER_PATTERN="terraform-mcp-server:"
+DOCKER_PATTERN="vault-mcp-server:"
 
 for json_file in "${JSON_FILES[@]}"; do
     if [ -f "$json_file" ]; then
         FOUND_DOCKER_VERSIONS=$(grep -o "${DOCKER_PATTERN}[^\"[:space:]]*" "$json_file" 2>/dev/null | sort -u || true)
         
         if [ -n "$FOUND_DOCKER_VERSIONS" ]; then
-            echo "Found terraform-mcp-server references in $json_file:"
+            echo "Found vault-mcp-server references in $json_file:"
             echo "$FOUND_DOCKER_VERSIONS"
             echo ""
             
@@ -59,7 +59,7 @@ for json_file in "${JSON_FILES[@]}"; do
                     if [ -n "$DOCKER_VERSION" ] && [[ ! "$DOCKER_VERSION" =~ [\$\{] ]] && [ "$DOCKER_VERSION" != "latest" ]; then
                         echo "Found Docker reference version in $json_file: '$DOCKER_VERSION'"
                         if [ "$SOURCE_VERSION" != "$DOCKER_VERSION" ]; then
-                            echo "❌ Version mismatch in $json_file: terraform-mcp-server:$DOCKER_VERSION should be terraform-mcp-server:$SOURCE_VERSION"
+                            echo "❌ Version mismatch in $json_file: vault-mcp-server:$DOCKER_VERSION should be vault-mcp-server:$SOURCE_VERSION"
                             VERSION_MISMATCH=true
                         fi
                     fi
