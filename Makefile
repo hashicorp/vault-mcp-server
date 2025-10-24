@@ -70,6 +70,18 @@ run-http-secure:
 docker-run-http:
 	$(DOCKER) run -p 8080:8080 --rm $(IMAGE_NAME) ./$(BASENAME) http --transport-port 8080
 
+# Synchronise server.json version fields with version/VERSION
+update-json-version:
+	@VERSION_FILE="$(CURDIR)/version/VERSION"; \
+	SERVER_JSON="$(CURDIR)/server.json"; \
+	"$(CURDIR)/scripts/update-json-version.sh" "$$SERVER_JSON" "$$VERSION_FILE"
+
+# Synchronise gemini-extension.json version fields with version/VERSION
+update-gemini-version:
+	@VERSION_FILE="$(CURDIR)/version/VERSION"; \
+	SERVER_JSON="$(CURDIR)/gemini-extension.json"; \
+	"$(CURDIR)/scripts/update-json-version.sh" "$$SERVER_JSON" "$$VERSION_FILE"
+
 # Test HTTP endpoint
 test-http:
 	@echo "Testing StreamableHTTP server health endpoint..."
@@ -101,5 +113,7 @@ help:
 	@echo "  run-http-secure - Run StreamableHTTP server with security settings"
 	@echo "  docker-run-http - Run StreamableHTTP server in Docker on port 8080"
 	@echo "  test-http      - Test StreamableHTTP health endpoint"
+	@echo "  update-json-version     - Update server.json to match version/VERSION"
+	@echo "  update-gemini-version   - Update gemini-extension.json to match version/VERSION"
 	@echo "  cleanup-test-containers - Stop and remove all test containers"
 	@echo "  help           - Show this help message"
