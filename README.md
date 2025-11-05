@@ -423,3 +423,9 @@ vault-mcp-server/
 ├── go.mod                                # Go module definition
 └── LICENSE                               # License information
 ```
+
+## Support
+
+For bug reports and feature requests, please open an [issue on GitHub](https://github.com/hashicorp/vault-mcp-server/issues).
+
+For general questions and discussions, open a GitHub Discussion.
