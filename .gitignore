@@ -32,6 +32,8 @@ go.work
 .Trashes
 ehthumbs.db
 Thumbs.db
+gemini-extension.json.backup*
+server.json.backup*
 
 # Project specific
 vault-mcp-server

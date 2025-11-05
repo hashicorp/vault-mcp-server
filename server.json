@@ -1,0 +1,96 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.hashicorp/vault-mcp-server",
+  "title": "Vault",
+  "description": "Securely read, store and manage secrets and PKI certificates using natural language.",
+  "repository": {
+    "url": "https://github.com/hashicorp/vault-mcp-server",
+    "source": "github"
+  },
+  "version": "0.2.2",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "docker.io/hashicorp/vault-mcp-server:0.2.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "named",
+          "name": "--rm"
+        },
+        {
+          "type": "named",
+          "name": "-i"
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Set an environment variable in the runtime",
+          "isRepeated": true
+        },
+        {
+          "type": "positional",
+          "valueHint": "env_var_name",
+          "value": "VAULT_ADDR",
+          "description": "Vault Address environment variable"
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Set an environment variable in the runtime",
+          "isRepeated": true
+        },
+        {
+          "type": "positional",
+          "valueHint": "env_var_name",
+          "value": "VAULT_TOKEN",
+          "description": "Vault Token environment variable"
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Set an environment variable in the runtime",
+          "isRepeated": true
+        },
+        {
+          "type": "positional",
+          "valueHint": "env_var_name",
+          "value": "VAULT_NAMESPACE",
+          "description": "Vault Namespace environment variable"
+        },
+        {
+          "type": "positional",
+          "valueHint": "image_name",
+          "value": "hashicorp/vault-mcp-server:0.2.2",
+          "description": "The container image to run"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "VAULT_ADDR",
+          "description": "Vault base URL.",
+          "default": "http://127.0.0.1:8200",
+          "isRequired": false
+        },
+        {
+          "name": "VAULT_TOKEN",
+          "description": "Vault API token used to authenticate requests.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "VAULT_NAMESPACE",
+          "description": "Vault namespace environment variable",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "vault",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "mcpServers": {
     "vault": {
       "command": "docker",
@@ -14,7 +14,7 @@
         "VAULT_TOKEN",
         "-e",
         "VAULT_NAMESPACE",
-        "hashicorp/vault-mcp-server:0.2.1"
+        "hashicorp/vault-mcp-server:0.2.2"
       ],
       "env": {
         "VAULT_ADDR": "$VAULT_ADDR",

@@ -61,6 +61,7 @@ ARG PRODUCT_NAME=$BIN_NAME
 ARG TARGETOS TARGETARCH
 LABEL version=$PRODUCT_VERSION
 LABEL revision=$PRODUCT_REVISION
+LABEL io.modelcontextprotocol.server.name="io.github.hashicorp/vault-mcp-server"
 COPY dist/$TARGETOS/$TARGETARCH/$BIN_NAME /bin/vault-mcp-server
 COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 CMD ["/bin/vault-mcp-server", "stdio"]
