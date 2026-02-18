@@ -7,11 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hashicorp/vault-mcp-server/pkg/client"
-	"github.com/hashicorp/vault-mcp-server/pkg/utils"
-
+	"strconv"
 	"strings"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/utils"
+	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
@@ -29,6 +30,9 @@ func ReadSecret(logger *log.Logger) server.ServerTool {
 			mcp.WithString("path",
 				mcp.Required(),
 				mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'."),
+			),
+			mcp.WithNumber("version",
+				mcp.Description("The version of the secret to read. Only supported on KV v2 mounts. If not specified, the latest version is returned."),
 			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -56,6 +60,14 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
 	}
 
+	// Extract optional version parameter
+	var version int
+	hasVersion := false
+	if v, ok := args["version"].(float64); ok {
+		version = int(v)
+		hasVersion = true
+	}
+
 	logger.WithFields(log.Fields{
 		"mount": mount,
 		"path":  path,
@@ -68,30 +80,31 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	mounts, err := vault.Sys().ListMounts()
+	isV2, err := getMountInfo(vault, mount)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Version parameter is only supported on KV v2
+	if hasVersion && !isV2 {
+		return mcp.NewToolResultError("version parameter is only supported on KV v2 mounts"), nil
 	}
 
 	// Default to a v1 KV path
 	fullPath := fmt.Sprintf("%s/%s", mount, strings.TrimPrefix(path, "/"))
-
-	isV2 := false
-
-	// Check if the mount exists
-	if m, ok := mounts[mount+"/"]; ok {
-		// is it a KV v2 mount?
-		if m.Options["version"] == "2" {
-			isV2 = true
-			// Construct the full path for reading (KV v2 format)
-			fullPath = fmt.Sprintf("%s/data/%s", mount, strings.TrimPrefix(path, "/"))
-		}
-	} else {
-		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
+	if isV2 {
+		fullPath = fmt.Sprintf("%s/data/%s", mount, strings.TrimPrefix(path, "/"))
 	}
 
 	// Read the secret
-	secret, err := vault.Logical().Read(fullPath)
+	var secret *api.Secret
+	if hasVersion && isV2 {
+		secret, err = vault.Logical().ReadWithData(fullPath, map[string][]string{
+			"version": {strconv.Itoa(version)},
+		})
+	} else {
+		secret, err = vault.Logical().Read(fullPath)
+	}
 	if err != nil {
 		logger.WithError(err).WithFields(log.Fields{
 			"mount":     mount,
