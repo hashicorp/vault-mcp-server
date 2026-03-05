@@ -23,6 +23,13 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	deleteMountTool := sys.DeleteMount(logger)
 	hcServer.AddTool(deleteMountTool.Tool, deleteMountTool.Handler)
 
+	// Tools for Vault auth method management
+	listAuthMethodsTool := sys.ListAuthMethods(logger)
+	hcServer.AddTool(listAuthMethodsTool.Tool, listAuthMethodsTool.Handler)
+
+	readAuthMethodTool := sys.ReadAuthMethod(logger)
+	hcServer.AddTool(readAuthMethodTool.Tool, readAuthMethodTool.Handler)
+
 	// Tools for KV secrets management
 	listSecretsTool := kv.ListSecrets(logger)
 	hcServer.AddTool(listSecretsTool.Tool, listSecretsTool.Handler)
