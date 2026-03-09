@@ -33,8 +33,23 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	writeSecretTool := kv.WriteSecret(logger)
 	hcServer.AddTool(writeSecretTool.Tool, writeSecretTool.Handler)
 
-	deleteSecretTool := kv.DeleteSecret(logger)
-	hcServer.AddTool(deleteSecretTool.Tool, deleteSecretTool.Handler)
+	deleteSecretVersionsTool := kv.DeleteSecretVersions(logger)
+	hcServer.AddTool(deleteSecretVersionsTool.Tool, deleteSecretVersionsTool.Handler)
+
+	readSecretMetadataTool := kv.ReadSecretMetadata(logger)
+	hcServer.AddTool(readSecretMetadataTool.Tool, readSecretMetadataTool.Handler)
+
+	writeSecretMetadataTool := kv.WriteSecretMetadata(logger)
+	hcServer.AddTool(writeSecretMetadataTool.Tool, writeSecretMetadataTool.Handler)
+
+	undeleteSecretVersionsTool := kv.UndeleteSecretVersions(logger)
+	hcServer.AddTool(undeleteSecretVersionsTool.Tool, undeleteSecretVersionsTool.Handler)
+
+	destroySecretVersionsTool := kv.DestroySecretVersions(logger)
+	hcServer.AddTool(destroySecretVersionsTool.Tool, destroySecretVersionsTool.Handler)
+
+	patchSecretTool := kv.PatchSecret(logger)
+	hcServer.AddTool(patchSecretTool.Tool, patchSecretTool.Handler)
 
 	// Tools for PKI management
 	enablePkiTool := pki.EnablePki(logger)

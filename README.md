@@ -262,12 +262,6 @@ Lists secrets in a KV mount under a specific path in Vault.
 - `mount`: The mount path of the secret engine
 - `path`: (Optional) The path to list secrets from (defaults to root)
 
-#### delete_secret
-Delete secrets (or keys) in a KV mount under a specific path in Vault.
-- `mount`: The mount path of the secret engine
-- `path`: The path to the secret to delete
-- `key`: (Optional) The key name to delete from the entire secret (defaults to deleting the entire secret)
-
 #### write_secret
 Writes a secret to a KV mount in Vault.
 - `mount`: The mount path of the secret engine
