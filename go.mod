@@ -1,6 +1,6 @@
 module github.com/hashicorp/vault-mcp-server
 
-go 1.24.0
+go 1.25.1
 
 require (
 	github.com/hashicorp/vault/api v1.22.0

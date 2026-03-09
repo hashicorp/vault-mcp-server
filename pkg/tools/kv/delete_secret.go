@@ -141,8 +141,8 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 			if !ok {
 				return mcp.NewToolResultError("unexpected secret data format for v2 API"), nil
 			}
-			secretData = data
-			secretsMap = secretData["data"].(map[string]interface{})
+			secretsMap = data
+			secretData = map[string]interface{}{"data": data}
 		} else {
 			// V1 API structure: secret.Data directly contains the key-value pairs
 			secretData = currentSecret.Data
