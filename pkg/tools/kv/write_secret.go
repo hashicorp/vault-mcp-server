@@ -132,7 +132,13 @@ func writeSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 				"data": make(map[string]interface{}),
 			}
 		}
-		secretData["data"].(map[string]interface{})[key] = value
+		// Handle nil data (e.g., soft-deleted secrets where data is nil)
+		dataMap, ok := secretData["data"].(map[string]interface{})
+		if !ok || dataMap == nil {
+			dataMap = make(map[string]interface{})
+			secretData["data"] = dataMap
+		}
+		dataMap[key] = value
 	} else {
 		if secretData == nil {
 			secretData = map[string]interface{}{}
