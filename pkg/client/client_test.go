@@ -4,11 +4,14 @@
 package client
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/hashicorp/vault/api"
+	"github.com/mark3labs/mcp-go/mcp"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -55,6 +58,115 @@ func TestNewVaultClient(t *testing.T) {
 		// Clean up
 		DeleteVaultClient(sessionID)
 	}
+}
+
+// mockClientSession implements server.ClientSession for testing.
+type mockClientSession struct {
+	id string
+}
+
+func (m *mockClientSession) Initialize()                                        {}
+func (m *mockClientSession) Initialized() bool                                  { return true }
+func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return make(chan mcp.JSONRPCNotification, 1) }
+func (m *mockClientSession) SessionID() string                                  { return m.id }
+
+func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
+	logger := log.New()
+	logger.SetLevel(log.WarnLevel)
+
+	newCtx := func(vals map[contextKey]string) context.Context {
+		ctx := context.Background()
+		for k, v := range vals {
+			ctx = context.WithValue(ctx, k, v)
+		}
+		return ctx
+	}
+
+	getTLSSkip := func(t *testing.T, c *api.Client) bool {
+		t.Helper()
+		httpClient := c.CloneConfig().HttpClient
+		tr, ok := httpClient.Transport.(*http.Transport)
+		if !ok || tr.TLSClientConfig == nil {
+			return false
+		}
+		return tr.TLSClientConfig.InsecureSkipVerify
+	}
+
+	baseCtx := map[contextKey]string{
+		contextKey(VaultAddress): "http://127.0.0.1:8200",
+		contextKey(VaultToken):   "test-token",
+	}
+
+	t.Run("env var fallback when context key absent", func(t *testing.T) {
+		t.Setenv(VaultSkipTLSVerify, "true")
+
+		session := &mockClientSession{id: "test-env-fallback"}
+		client, err := CreateVaultClientForSession(newCtx(baseCtx), session, logger)
+		assert.NoError(t, err)
+		assert.True(t, getTLSSkip(t, client), "expected InsecureSkipVerify=true from env fallback")
+		DeleteVaultClient(session.id)
+	})
+
+	t.Run("context true takes precedence over env false", func(t *testing.T) {
+		t.Setenv(VaultSkipTLSVerify, "false")
+
+		ctxVals := map[contextKey]string{
+			contextKey(VaultAddress):      "http://127.0.0.1:8200",
+			contextKey(VaultToken):        "test-token",
+			contextKey(VaultSkipTLSVerify): "true",
+		}
+		session := &mockClientSession{id: "test-ctx-true-env-false"}
+		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
+		assert.NoError(t, err)
+		assert.True(t, getTLSSkip(t, client), "context true should win over env false")
+		DeleteVaultClient(session.id)
+	})
+
+	t.Run("context false takes precedence over env true", func(t *testing.T) {
+		t.Setenv(VaultSkipTLSVerify, "true")
+
+		ctxVals := map[contextKey]string{
+			contextKey(VaultAddress):      "http://127.0.0.1:8200",
+			contextKey(VaultToken):        "test-token",
+			contextKey(VaultSkipTLSVerify): "false",
+		}
+		session := &mockClientSession{id: "test-ctx-false-env-true"}
+		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
+		assert.NoError(t, err)
+		assert.False(t, getTLSSkip(t, client), "context false should win over env true")
+		DeleteVaultClient(session.id)
+	})
+
+	t.Run("defaults to false when neither context nor env set", func(t *testing.T) {
+		prevVal, wasSet := os.LookupEnv(VaultSkipTLSVerify)
+		os.Unsetenv(VaultSkipTLSVerify)
+		t.Cleanup(func() {
+			if wasSet {
+				os.Setenv(VaultSkipTLSVerify, prevVal)
+			}
+		})
+
+		session := &mockClientSession{id: "test-default-false"}
+		client, err := CreateVaultClientForSession(newCtx(baseCtx), session, logger)
+		assert.NoError(t, err)
+		assert.False(t, getTLSSkip(t, client), "should default to InsecureSkipVerify=false")
+		DeleteVaultClient(session.id)
+	})
+
+	t.Run("invalid context value falls back to env", func(t *testing.T) {
+		t.Setenv(VaultSkipTLSVerify, "true")
+
+		ctxVals := map[contextKey]string{
+			contextKey(VaultAddress):      "http://127.0.0.1:8200",
+			contextKey(VaultToken):        "test-token",
+			contextKey(VaultSkipTLSVerify): "not-a-bool",
+		}
+		session := &mockClientSession{id: "test-invalid-ctx"}
+		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
+		assert.NoError(t, err)
+		assert.True(t, getTLSSkip(t, client), "invalid context should fall back to env=true")
+		DeleteVaultClient(session.id)
+	})
 }
 
 func TestVaultNamespaceSupport(t *testing.T) {
