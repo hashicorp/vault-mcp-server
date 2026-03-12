@@ -98,8 +98,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	}
 
 	t.Run("env var fallback when context key absent", func(t *testing.T) {
-		os.Setenv(VaultSkipTLSVerify, "true")
-		defer os.Unsetenv(VaultSkipTLSVerify)
+		t.Setenv(VaultSkipTLSVerify, "true")
 
 		session := &mockClientSession{id: "test-env-fallback"}
 		client, err := CreateVaultClientForSession(newCtx(baseCtx), session, logger)
@@ -109,8 +108,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	})
 
 	t.Run("context true takes precedence over env false", func(t *testing.T) {
-		os.Setenv(VaultSkipTLSVerify, "false")
-		defer os.Unsetenv(VaultSkipTLSVerify)
+		t.Setenv(VaultSkipTLSVerify, "false")
 
 		ctxVals := map[contextKey]string{
 			contextKey(VaultAddress):      "http://127.0.0.1:8200",
@@ -125,8 +123,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	})
 
 	t.Run("context false takes precedence over env true", func(t *testing.T) {
-		os.Setenv(VaultSkipTLSVerify, "true")
-		defer os.Unsetenv(VaultSkipTLSVerify)
+		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
 			contextKey(VaultAddress):      "http://127.0.0.1:8200",
@@ -141,7 +138,13 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	})
 
 	t.Run("defaults to false when neither context nor env set", func(t *testing.T) {
+		prevVal, wasSet := os.LookupEnv(VaultSkipTLSVerify)
 		os.Unsetenv(VaultSkipTLSVerify)
+		t.Cleanup(func() {
+			if wasSet {
+				os.Setenv(VaultSkipTLSVerify, prevVal)
+			}
+		})
 
 		session := &mockClientSession{id: "test-default-false"}
 		client, err := CreateVaultClientForSession(newCtx(baseCtx), session, logger)
@@ -151,8 +154,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	})
 
 	t.Run("invalid context value falls back to env", func(t *testing.T) {
-		os.Setenv(VaultSkipTLSVerify, "true")
-		defer os.Unsetenv(VaultSkipTLSVerify)
+		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
 			contextKey(VaultAddress):      "http://127.0.0.1:8200",
