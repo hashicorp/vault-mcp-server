@@ -137,7 +137,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 				logger.WithFields(log.Fields{
 					"session_id": session.SessionID(),
 					"value":      skipTLSStr,
-				}).Warn("Invalid boolean value for VaultSkipTLSVerify in context; using default")
+				}).Warn("Invalid boolean value for VaultSkipTLSVerify in context; falling back to VAULT_SKIP_VERIFY or its default")
 			} else {
 				vaultSkipTLSVerify = parsed
 				skipProvidedInContext = true
