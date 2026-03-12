@@ -235,6 +235,10 @@ Run the Vault MCP server:
 
 ```bash
 docker run --network=mcp -p 8080:8080 -e VAULT_ADDR='http://vault-dev:8200' -e VAULT_TOKEN='<your-token-from-last-step>' -e TRANSPORT_MODE='http' vault-mcp-server:dev
+
+# Filter tools (optional)
+docker run -i --rm vault-mcp-server:dev --toolsets=sys,kv
+docker run -i --rm vault-mcp-server:dev --tools=read_secret,list_mounts
 ```
 
 ## Available Tools
@@ -332,6 +336,20 @@ Issues a new certificate using a PKI role.
 - `ipSans`: (Optional) IP SANs for the certificate
 - `ttl`: (Optional) Time-to-live for the certificate
 
+### Tool Filtering
+
+Control which tools are available using `--toolsets` (groups) or `--tools` (individual):
+
+```bash
+# Enable tool groups (default: all)
+./vault-mcp-server --toolsets=sys,kv
+
+# Enable specific tools only
+./vault-mcp-server --tools=read_secret,list_mounts,enable_pki
+```
+
+Available toolsets: `sys`, `kv`, `pki`, `all`, `default`. See `pkg/toolsets/mapping.go` for individual tool names. Cannot use both flags together.
+
 ## Command Line Usage
 
 ```bash
@@ -340,10 +358,10 @@ Issues a new certificate using a PKI role.
 
 # Run in stdio mode (default)
 ./vault-mcp-server
-./vault-mcp-server stdio
+./vault-mcp-server stdio [--log-file /path/to/log] [--toolsets <toolsets>] [--tools <tools>]
 
 # Run in HTTP mode
-./vault-mcp-server http --transport-port 8080 --transport-host 127.0.0.1
+./vault-mcp-server http --transport-port 8080 --transport-host 127.0.0.1 [--toolsets <toolsets>] [--tools <tools>]
 
 # Show version
 ./vault-mcp-server --version
@@ -414,6 +432,9 @@ vault-mcp-server/
 │   │   ├── pki/                          # PKI certificate tools
 │   │   ├── sys/                          # System management tools
 │   │   └── tools.go                      # Tool registration
+│   ├── toolsets/                         # Toolset definitions and filtering
+│   │   ├── toolsets.go                   # Toolset groups and helpers
+│   │   └── mapping.go                    # Tool-to-toolset mapping
 │   └── utils/                            # Utility functions
 ├── scripts/                              # Build and utility scripts
 ├── version/                              # Version information
