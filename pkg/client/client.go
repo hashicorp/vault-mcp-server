@@ -127,15 +127,34 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 	}
 
 	var vaultSkipTLSVerify bool
+	skipProvidedInContext := false
 	skipTLSVal := ctx.Value(contextKey(VaultSkipTLSVerify))
 	if skipTLSVal != nil {
 		skipTLSStr, ok := skipTLSVal.(string)
 		if ok {
-			vaultSkipTLSVerify, _ = strconv.ParseBool(skipTLSStr)
+			parsed, err := strconv.ParseBool(skipTLSStr)
+			if err != nil {
+				logger.WithFields(log.Fields{
+					"session_id": session.SessionID(),
+					"value":      skipTLSStr,
+				}).Warn("Invalid boolean value for VaultSkipTLSVerify in context; using default")
+			} else {
+				vaultSkipTLSVerify = parsed
+				skipProvidedInContext = true
+			}
 		}
 	}
-	if !vaultSkipTLSVerify {
-		vaultSkipTLSVerify, _ = strconv.ParseBool(getEnv(VaultSkipTLSVerify, "false"))
+	if !skipProvidedInContext {
+		envVal := getEnv(VaultSkipTLSVerify, "false")
+		parsed, err := strconv.ParseBool(envVal)
+		if err != nil {
+			logger.WithFields(log.Fields{
+				"session_id": session.SessionID(),
+				"value":      envVal,
+			}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using existing value")
+		} else {
+			vaultSkipTLSVerify = parsed
+		}
 	}
 
 	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken, vaultNamespace)
