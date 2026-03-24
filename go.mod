@@ -3,7 +3,7 @@ module github.com/hashicorp/vault-mcp-server
 go 1.25.1
 
 require (
-	github.com/hashicorp/vault/api v1.22.0
+	github.com/hashicorp/vault/api v1.23.0
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
