@@ -47,3 +47,5 @@ dist/
 # Environment files
 .env
 .env.local
+/.opencode
+/.claude
