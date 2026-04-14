@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/mark3labs/mcp-go v0.47.1
+	github.com/mark3labs/mcp-go v0.48.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
