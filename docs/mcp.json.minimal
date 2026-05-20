@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "vault-mcp-server": {
+      "command": "/absolute/path/to/vault-mcp-server/bin/vault-mcp-server",
+      "args": ["streamable-http"],
+      "env": {
+        "VAULT_ADDR": "http://127.0.0.1:8200",
+        "VAULT_JWT_TOKEN": "your-jwt-token-here",
+        "VAULT_JWT_ROLE": "mcp-role",
+        "VAULT_JWT_AUTH_PATH": "oidc"
+      }
+    }
+  }
+}

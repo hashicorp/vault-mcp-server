@@ -16,16 +16,34 @@ and other MCP clients.
 
 ## Features
 
-- Create new mounts in Vault (KV v1, KV v2)
-- List all available mounts
-- Delete a mount
-- Write secrets to KV mounts
-- Read secrets from KV mounts
-- List all secrets under a path
-- Delete a complete secret or a key of a secret 
-- Comprehensive HTTP middleware stack (CORS, logging, Vault context)
-- Session-based Vault client management
-- Structured logging with configurable output
+- **Vault Operations:**
+  - Create new mounts in Vault (KV v1, KV v2)
+  - List all available mounts
+  - Delete a mount
+  - Write secrets to KV mounts
+  - Read secrets from KV mounts
+  - List all secrets under a path
+  - Delete a complete secret or a key of a secret
+- **PKI Operations:**
+  - Enable PKI secrets engine
+  - Create and manage PKI issuers
+  - Create and manage PKI roles
+  - Issue PKI certificates
+- **Security & Authentication:**
+  - **Vault JWT/OIDC Authentication** - Use JWT tokens from Okta/Auth0 to authenticate to Vault
+  - OAuth 2.0 authentication support (Auth0 & Okta)
+  - Protected Resource Metadata (RFC 9728)
+  - JWT token validation with JWKS
+  - Scope-based authorization
+  - Auto-detection of OAuth provider
+- **HTTP Middleware:**
+  - Comprehensive HTTP middleware stack (CORS, logging, Vault context)
+  - Session-based Vault client management
+  - Rate limiting (global and per-session)
+  - TLS support
+- **Observability:**
+  - Structured logging with configurable output
+  - Health check endpoint
 
 ## Prerequisites
 - Go 1.24 or later (if building from source)
@@ -66,19 +84,63 @@ and other MCP clients.
 
 The server can be configured using environment variables:
 
+**Vault Configuration:**
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
-- `VAULT_TOKEN`: Vault authentication token (required)
+- `VAULT_TOKEN`: Vault authentication token (used if JWT auth is not configured)
 - `VAULT_NAMESPACE`: Vault namespace (optional)
+
+**Vault JWT Authentication (Recommended):**
+- `VAULT_JWT_TOKEN`: JWT/access token from OIDC provider (Okta, Auth0, etc.)
+- `VAULT_JWT_ROLE`: Vault JWT role name (default: `mcp-role`)
+- `VAULT_JWT_AUTH_PATH`: Vault auth path (default: `oidc`)
+
+When `VAULT_JWT_TOKEN` is set, the server automatically authenticates to Vault using JWT instead of a static token. See [JWT Authentication Guide](docs/VAULT_JWT_AUTH.md) for setup instructions.
+
+**Transport Configuration:**
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
 - `TRANSPORT_PORT`: Port for HTTP mode (default: `8080`)
 - `MCP_ENDPOINT`: HTTP server endpoint path (default: `/mcp`)
+
+**CORS Configuration:**
 - `MCP_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS (default: `""`)
 - `MCP_CORS_MODE`: CORS mode: `strict`, `development`, or `disabled` (default: `strict`)
+
+**TLS Configuration:**
 - `MCP_TLS_CERT_FILE`: Location of the TLS certificate file (e.g. `/path/to/cert.pem`) (default: `""`)
 - `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
+
+**Rate Limiting:**
 - `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
+
+**Authentication (OAuth 2.0):**
+
+The server supports OAuth 2.0 authentication with Auth0 and Okta. The provider is auto-detected based on environment variables.
+
+*Common Settings:*
+- `MCP_AUTH_ENABLED`: Enable OAuth 2.0 authentication (default: `false`)
+- `MCP_AUTH_PROVIDER`: OAuth provider (`auth0` or `okta`, auto-detected if not set)
+
+*Auth0 Settings:*
+- `AUTH0_DOMAIN`: Auth0 domain (e.g., `your-tenant.us.auth0.com`) (required if auth enabled with Auth0)
+- `AUTH0_AUDIENCE`: API identifier/audience (e.g., `https://api.yourapp.com`) (required if auth enabled with Auth0)
+- `AUTH0_ISSUER`: Token issuer URL (optional, defaults to `https://{AUTH0_DOMAIN}/`)
+- `AUTH0_REQUIRED_SCOPES`: Comma-separated list of required scopes (default: `mcp:tools,mcp:resources`)
+
+*Okta Settings:*
+- `OKTA_DOMAIN`: Okta domain (e.g., `dev-12345.okta.com`) (required if auth enabled with Okta)
+- `OKTA_AUDIENCE`: API identifier/audience (e.g., `api://default`) (required if auth enabled with Okta)
+- `OKTA_ISSUER`: Token issuer URL (optional, auto-detected from domain and auth server ID)
+- `OKTA_AUTH_SERVER_ID`: Authorization server ID (default: `default`)
+- `OKTA_REQUIRED_SCOPES`: Comma-separated list of required scopes (default: `mcp:tools,mcp:resources`)
+
+For detailed authentication setup instructions, see:
+- **JWT Authentication**: [docs/VAULT_JWT_AUTH.md](docs/VAULT_JWT_AUTH.md) - Authenticate to Vault using JWT/OIDC tokens
+- **MCP Client Configuration**: [docs/MCP_CLIENT_JWT_CONFIG.md](docs/MCP_CLIENT_JWT_CONFIG.md) - Configure JWT auth in mcp.json
+- **JWT Quick Start**: [docs/JWT_QUICKSTART.md](docs/JWT_QUICKSTART.md) - 3-step quick start guide
+- **Auth0**: [docs/AUTH0_SETUP.md](docs/AUTH0_SETUP.md)
+- **Okta**: [docs/OKTA_SETUP.md](docs/OKTA_SETUP.md)
 
 ## HTTP Mode Configuration
 
@@ -227,7 +289,10 @@ Run the Vault container and get the root token:
 
 ```bash
 docker network create mcp
-docker run --cap-add=IPC_LOCK --name=vault-dev --network=mcp -p 8200:8200 hashicorp/vault server -dev
+# Linux/Windows with WSL2:
+docker run --cap-add=IPC_LOCK --name=vault-dev --network=mcp -p 8200:8200 hashicorp/vault:latest server -dev -dev-listen-address=0.0.0.0:8200
+# macOS (if you get capability errors):
+docker run --name=vault-dev --network=mcp -p 8200:8200 -e 'SKIP_SETCAP=true' hashicorp/vault:latest server -dev -dev-listen-address=0.0.0.0:8200
 docker logs vault-dev
 ```
 

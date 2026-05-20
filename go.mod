@@ -3,6 +3,7 @@ module github.com/hashicorp/vault-mcp-server
 go 1.25.5
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/mark3labs/mcp-go v0.47.1
 	github.com/sirupsen/logrus v1.9.4

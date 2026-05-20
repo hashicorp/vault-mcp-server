@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+    "vault-mcp-server": {
+      "command": "/absolute/path/to/vault-mcp-server/bin/vault-mcp-server",
+      "args": ["streamable-http"],
+      "env": {
+        "_comment_vault": "=== Vault Configuration ===",
+        "VAULT_ADDR": "http://127.0.0.1:8200",
+        
+        "_comment_jwt": "=== JWT Authentication (Recommended) ===",
+        "VAULT_JWT_TOKEN": "your-jwt-token-from-okta-or-auth0",
+        "VAULT_JWT_ROLE": "mcp-role",
+        "VAULT_JWT_AUTH_PATH": "oidc",
+        
+        "_comment_okta": "=== Okta Configuration (for automated script) ===",
+        "OKTA_DOMAIN": "your-domain.okta.com",
+        "OKTA_CLIENT_ID": "your-okta-client-id",
+        "OKTA_REDIRECT_URI": "http://localhost:3000/callback",
+        "OKTA_AUTHORIZATION_SERVER": "default",
+        
+        "_comment_auth0": "=== Auth0 Configuration (alternative to Okta) ===",
+        "_comment_auth0_note": "Uncomment these if using Auth0 instead of Okta",
+        "_AUTH0_DOMAIN": "your-tenant.us.auth0.com",
+        "_AUTH0_AUDIENCE": "https://api.yourapp.com",
+        "_AUTH0_REQUIRED_SCOPES": "mcp:tools,mcp:resources",
+        
+        "_comment_optional": "=== Optional Configuration ===",
+        "VAULT_NAMESPACE": "",
+        "VAULT_SKIP_VERIFY": "false",
+        
+        "_comment_transport": "=== Transport Configuration ===",
+        "TRANSPORT_HOST": "127.0.0.1",
+        "TRANSPORT_PORT": "8080",
+        "MCP_ENDPOINT": "/mcp",
+        
+        "_comment_logging": "=== Logging Configuration ===",
+        "LOG_LEVEL": "info",
+        
+        "_comment_mcp_auth": "=== MCP Server OAuth Authentication (Optional) ===",
+        "_comment_mcp_auth_note": "Enable this to require OAuth tokens for MCP requests",
+        "_MCP_AUTH_ENABLED": "false"
+      }
+    }
+  }
+}

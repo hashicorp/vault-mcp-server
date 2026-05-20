@@ -1,0 +1,25 @@
+1. Where should the OIDC authentication flow be initiated and completed? This determines the user experience and implementation complexity.
+2. Should the MCP server handle JWT-to-Vault-token exchange, or expect the client to provide a Vault token? 
+3. BLOCKING: OIDC browser flow is async. mcp-go OnRegisterSession is synchronous. If auth is in the hook, MCP client may timeout. How do you handle this?
+4. Requirement is for 'local execution mode'. Should OIDC auth work for both stdio and HTTP transport modes, or stdio only?
+5. The PRD mentions customers need to enable JWT auth method in Vault. Should the MCP server validate this prerequisite or assume it's configured?
+6. RFC validates JWT auth on startup via sys/auth/(path) - that needs an authenticated token. OIDC replaces tokens. What token makes the startup check?
+7. How should the server determine which tools to expose based on user's Vault permissions?
+8. JWT tokens and Vault tokens expire. How should the MCP server handle token expiration during a session?
+9. What OIDC provider information needs to be configured? This affects setup complexity. - for me
+10. How should existing static token authentication be handled after OIDC is implemented?
+11. For the browser-based OIDC flow, when and how should the Auth callback server run?  (chose 1 or 3, for now 3) 
+    1. Ephemeral callback server: Start callback server on random port during session init, shut down after receiving callback. Clean but port randomness.
+    2. Persistent callback server: Long-running callback server on fixed port for entire MCP server lifetime. Simpler but port collision risk. ( no )
+    3. Reuse HTTP server when available :For HTTP mode, reuse MCP server's HTTP port with dedicated endpoint. For stdio, use ephemeral. Mode-specific.
+12. For eager policy evaluation, how should the server determine which tools the user can access?
+13. You selected automatic token refresh. When should the server trigger the refresh?
+14. You selected 'Full JWT claims' for audit logging. Which claims specifically should be logged?
+15. For HTTP transport mode, how should authentication work across multiple client connections? (Currently should this be 1 client and 1 server)
+16. For eager policy evaluation, at what granularity should tools be filtered?
+17. Vault JWT auth methods can be mounted at any path. How should the server locate the JWT auth endpoint?
+18. The PRD mentions 'sensitive operations require explicit user confirmation'.Should write/delete tools be gated with human-in-the-loop approval?
+19. The PRD targets 'single-user, local execution'. Should the server support multiple concurrent MCP sessions?
+20. How should MCP sessions map to OIDC authentication and Vault tokens? (Single session?? )
+21. What should happen if OIDC authentication fails during session initialization?
+22. How should authentication and authorization errors be communicated?

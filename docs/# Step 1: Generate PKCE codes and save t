@@ -1,0 +1,72 @@
+CODE_VERIFIER=$(openssl rand -hex 32)
+CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" \
+  | openssl dgst -binary -sha256 \
+  | openssl base64 -A \
+  | tr '+/' '-_' \
+  | tr -d '=')
+
+echo "Code Verifier (${#CODE_VERIFIER} chars): $CODE_VERIFIER"
+echo "Code Challenge: $CODE_CHALLENGE"
+
+echo "=== SAVE THESE VALUES ==="
+echo "Code Verifier: $CODE_VERIFIER"
+echo "Code Challenge: $CODE_CHALLENGE"
+echo "========================="
+
+AUTH_URL="https://integrator-6794552.okta.com/oauth2/default/v1/authorize?client_id=0oa134sny59dhpzhO698&response_type=code&scope=openid%20profile%20email%20mcp:tools%20mcp:resources&redirect_uri=http://localhost:3000/callback&state=random_state_string&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256"
+
+echo "Opening authorization URL..."
+open "$AUTH_URL"
+
+echo ""
+echo "After login, you'll be redirected to http://localhost:3000/callback?code=..."
+echo "Copy the ENTIRE URL from your browser and paste it here:"
+read REDIRECT_URL
+
+AUTH_CODE=$(echo "$REDIRECT_URL" | sed -n 's/.*code=\([^&]*\).*/\1/p')
+echo "Extracted code: $AUTH_CODE"
+
+echo ""
+echo "Exchanging code for access token..."
+curl --request POST \
+  --url https://integrator-6794552.okta.com/oauth2/default/v1/token \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data "grant_type=authorization_code" \
+  --data "client_id=0oa134sny59dhpzhO698" \
+  --data "redirect_uri=http://localhost:3000/callback" \
+  --data "code=$AUTH_CODE" \
+  --data "code_verifier=$CODE_VERIFIER"
+
+
+
+  flow:
+  1. Generate secret
+   code_verifier
+2. Create fingerprint
+   code_challenge
+3. Open browser login
+   → send code_challenge
+4. User logs into Okta
+5. Okta redirects back
+   localhost/callback?code=xyz
+6. App sends:
+   code + code_verifier
+7. Okta verifies:
+   hash(verifier) == challenge
+8. Returns access token
+
+
+For MCP flow:
+MCP Server
+    ↓
+Open browser (OIDC)
+    ↓
+User login in Okta
+    ↓
+Receive auth code
+    ↓
+Exchange code → access token
+    ↓
+Use JWT/access token for Vault auth/jwt
+    ↓
+Get Vault token

@@ -28,6 +28,9 @@ const (
 	VaultSkipTLSVerify   = "VAULT_SKIP_VERIFY"
 	VaultHeaderToken     = "X-Vault-Token"
 	VaultHeaderNamespace = "X-Vault-Namespace"
+	VaultJWTToken        = "VAULT_JWT_TOKEN"
+	VaultJWTRole         = "VAULT_JWT_ROLE"
+	VaultJWTAuthPath     = "VAULT_JWT_AUTH_PATH"
 )
 
 const DefaultVaultAddress = "http://127.0.0.1:8200"
@@ -60,6 +63,62 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 	}
 
 	client.SetToken(vaultToken)
+
+	if vaultNamespace != "" {
+		client.SetNamespace(vaultNamespace)
+	}
+
+	activeClients.Store(sessionId, client)
+
+	return client, nil
+}
+
+// NewVaultClientWithJWT creates a new Vault client using JWT authentication
+func NewVaultClientWithJWT(sessionId string, vaultAddress string, vaultSkipTLSVerify bool, jwtToken string, jwtRole string, jwtAuthPath string, vaultNamespace string, logger *log.Logger) (*api.Client, error) {
+	// Initialize Vault client
+	config := api.DefaultConfig()
+	config.Address = vaultAddress
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: vaultSkipTLSVerify},
+	}
+	config.HttpClient = &http.Client{Transport: tr}
+
+	client, err := api.NewClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("api.NewClient failed to create Vault client: %v", err)
+	}
+
+	// Authenticate using JWT
+	authPath := fmt.Sprintf("auth/%s/login", jwtAuthPath)
+	data := map[string]interface{}{
+		"role": jwtRole,
+		"jwt":  jwtToken,
+	}
+
+	logger.WithFields(log.Fields{
+		"auth_path": authPath,
+		"role":      jwtRole,
+	}).Debug("Authenticating with Vault using JWT")
+
+	secret, err := client.Logical().Write(authPath, data)
+	if err != nil {
+		return nil, fmt.Errorf("JWT authentication failed: %w", err)
+	}
+
+	if secret == nil || secret.Auth == nil {
+		return nil, fmt.Errorf("no authentication data returned from Vault")
+	}
+
+	// Set the Vault token from the authentication response
+	vaultToken := secret.Auth.ClientToken
+	client.SetToken(vaultToken)
+
+	logger.WithFields(log.Fields{
+		"token_ttl":       secret.Auth.LeaseDuration,
+		"token_renewable": secret.Auth.Renewable,
+		"policies":        secret.Auth.Policies,
+	}).Info("Successfully authenticated to Vault using JWT")
 
 	if vaultNamespace != "" {
 		client.SetNamespace(vaultNamespace)
@@ -112,15 +171,6 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
-	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
-	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultToken, "")
-		if vaultToken == "" {
-			//logger.Warn("Vault token not provided for session")
-			return nil, fmt.Errorf("vault token not provided for session")
-		}
-	}
-
 	vaultNamespace, ok := ctx.Value(contextKey(VaultNamespace)).(string)
 	if !ok || vaultNamespace == "" {
 		vaultNamespace = getEnv(VaultNamespace, "")
@@ -151,9 +201,40 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 			logger.WithFields(log.Fields{
 				"session_id": session.SessionID(),
 				"value":      envVal,
-		}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
+			}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
 		} else {
 			vaultSkipTLSVerify = parsed
+		}
+	}
+
+	// Check for JWT authentication first
+	jwtToken := getEnv(VaultJWTToken, "")
+	if jwtToken != "" {
+		logger.WithField("session_id", session.SessionID()).Info("Using JWT authentication for Vault")
+
+		jwtRole := getEnv(VaultJWTRole, "mcp-role")
+		jwtAuthPath := getEnv(VaultJWTAuthPath, "oidc")
+
+		newClient, err := NewVaultClientWithJWT(session.SessionID(), vaultAddress, vaultSkipTLSVerify, jwtToken, jwtRole, jwtAuthPath, vaultNamespace, logger)
+		if err != nil {
+			return nil, fmt.Errorf("JWT authentication failed: %v", err)
+		}
+
+		logger.WithFields(log.Fields{
+			"session_id": session.SessionID(),
+			"vault_addr": vaultAddress,
+			"auth_type":  "jwt",
+		}).Info("Created Vault client with JWT authentication")
+
+		return newClient, nil
+	}
+
+	// Fall back to token authentication
+	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
+	if !ok || vaultToken == "" {
+		vaultToken = getEnv(VaultToken, "")
+		if vaultToken == "" {
+			return nil, fmt.Errorf("vault token or JWT token not provided for session")
 		}
 	}
 
@@ -165,6 +246,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 	logger.WithFields(log.Fields{
 		"session_id": session.SessionID(),
 		"vault_addr": vaultAddress,
+		"auth_type":  "token",
 	}).Info("Created Vault client for session")
 
 	return newClient, nil

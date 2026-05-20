@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
@@ -146,6 +147,12 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
 	baseStreamableServer := server.NewStreamableHTTPServer(hcServer, opts...)
 
+	// Load OAuth configuration (auto-detects Auth0 or Okta)
+	authConfig := auth.LoadOAuthConfigFromEnv()
+	if err := auth.ValidateOAuthConfig(authConfig, logger); err != nil {
+		return fmt.Errorf("OAuth configuration error: %w", err)
+	}
+
 	// Load CORS configuration
 	corsConfig := client.LoadCORSConfigFromEnv()
 
@@ -166,9 +173,27 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 
 	mux := http.NewServeMux()
 
+	// Determine server base URL for auth metadata
+	baseURL := auth.GetServerBaseURL(host, port, tlsConfig != nil)
+	resourceMetadataURL := auth.GetResourceMetadataURL(baseURL)
+
+	// Add Protected Resource Metadata endpoint (RFC 9728)
+	if authConfig.Enabled {
+		metadataHandler := auth.NewMetadataHandler(authConfig, baseURL+endpointPath, logger)
+		mux.Handle("/.well-known/oauth-protected-resource", metadataHandler)
+		logger.Info("Protected Resource Metadata endpoint available at /.well-known/oauth-protected-resource")
+	}
+
 	// Apply middleware
 	streamableServer = client.VaultContextMiddleware(logger)(streamableServer)
 	streamableServer = client.LoggingMiddleware(logger)(streamableServer)
+
+	// Apply authentication middleware
+	if authConfig.Enabled {
+		authMiddleware := auth.NewAuthMiddleware(authConfig, resourceMetadataURL, logger)
+		streamableServer = authMiddleware.Middleware(streamableServer)
+		logger.Info("Authentication middleware enabled")
+	}
 
 	// Handle the /mcp endpoint with the streamable server (with security wrapper)
 	mux.Handle(endpointPath, streamableServer)
