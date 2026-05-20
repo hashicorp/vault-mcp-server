@@ -1,8 +1,7 @@
 package examples
+
 // Copyright IBM Corp. 2025
 // SPDX-License-Identifier: MPL-2.0
-
-package main
 
 import (
 	"fmt"
@@ -33,7 +32,7 @@ func main() {
 		logger.Errorf("Authentication failed: %v", err)
 	} else {
 		logger.Info("Successfully authenticated!")
-		
+
 		// Use the client
 		secret, err := client1.Logical().List("secret/metadata")
 		if err != nil {
