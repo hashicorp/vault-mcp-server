@@ -1,0 +1,214 @@
+
+Updated memory file [](file:///Users/stutisrivastava/Library/Application%20Support/Code/User/workspaceStorage/ac7418564c96f6dd2faa38c0dea16277/GitHub.copilot-chat/memory-tool/memories/MDdmOWRmNDEtZDc4OC00MTVhLTg0ZDUtM2IyZjQ1MGQ2YTM3/mcp_analysis.md)
+
+Updated memory file [](file:///Users/stutisrivastava/Library/Application%20Support/Code/User/workspaceStorage/ac7418564c96f6dd2faa38c0dea16277/GitHub.copilot-chat/memory-tool/memories/MDdmOWRmNDEtZDc4OC00MTVhLTg0ZDUtM2IyZjQ1MGQ2YTM3/mcp_analysis.md)
+
+Read [](file:///Users/stutisrivastava/Library/Application%20Support/Code/User/workspaceStorage/ac7418564c96f6dd2faa38c0dea16277/GitHub.copilot-chat/chat-session-resources/07f9df41-d788-415a-84d5-3b2f450d6a37/toolu_bdrk_01EyRNqLxvsoJjv8WFGDndW7__vscode-1779276201852/content.txt)
+
+Read [](file:///Users/stutisrivastava/Library/Application%20Support/Code/User/workspaceStorage/ac7418564c96f6dd2faa38c0dea16277/GitHub.copilot-chat/chat-session-resources/07f9df41-d788-415a-84d5-3b2f450d6a37/toolu_bdrk_01BBkyBZ3K3fZyJXcRrS5qRU__vscode-1779276201853/content.txt)
+
+Excellent! Now I have the full picture. Let me grill you systematically on the implementation details: 
+
+Analyzing your answers...
+
+Perfect! Your pre-auth pattern is architecturally sound and addresses the synchronous hook limitation. Now let me drill into implementation specifics: 
+
+Analyzing your answers...
+
+I see a contradiction in your answers. Let me clarify a few critical points: 
+
+Analyzing your answers...
+
+Perfect! I have everything I need. Let me create the comprehensive implementation plan. 
+
+Created memory file [](file:///Users/stutisrivastava/Library/Application%20Support/Code/User/workspaceStorage/ac7418564c96f6dd2faa38c0dea16277/GitHub.copilot-chat/memory-tool/memories/MDdmOWRmNDEtZDc4OC00MTVhLTg0ZDUtM2IyZjQ1MGQ2YTM3/plan.md)
+
+## Plan: OIDC-Based Authentication for Vault MCP Server
+
+Implement pre-authenticated OIDC flow (Authorization Code + PKCE) that authenticates users via enterprise IdP (Auth0/Okta/Generic OIDC) before MCP session establishment. The OIDC ID token is used with Vault JWT auth to obtain a Vault token for tool execution. Supports both HTTP and stdio transports with unified implementation.
+
+**TL;DR**: Add startup-time OIDC authentication with ephemeral callback server, persistent token cache, automatic silent refresh, and seamless integration into existing session management. Maintains backward compatibility with static VAULT_TOKEN.
+
+---
+
+### Steps
+
+**Phase 1: Configuration & Foundation** *(parallel with Phase 2)*
+1. Create config file structure at `~/.vault-mcp/config.yaml` with OIDC settings
+2. Add config loader in config.go merging file + env vars (env overrides)
+3. Define new env vars: `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URI`, `OIDC_AUTH_TIMEOUT_SECONDS`, `OIDC_REQUEST_REFRESH_TOKEN`, `VAULT_TOKEN_SOURCE`
+4. Add logging infrastructure: structured logger writing to stderr + `~/.vault-mcp/auth.log`
+
+**Phase 2: PKCE & Token Cache** *(parallel with Phase 1)*
+5. Implement PKCE generator in `pkg/auth/pkce.go`: `GeneratePKCEChallenge()`, `GenerateState()`
+6. Create token cache structure in `pkg/auth/cache.go`: `TokenCache` type with fields (access_token, refresh_token, id_token, vault_token, expires_at)
+7. Implement cache persistence: `SaveCache()` and `LoadCache()` to `~/.vault-mcp/auth-cache.json` (plaintext)
+8. Add PKCE state persistence: Save code_verifier + state to `~/.vault-mcp/pkce-state.json`
+
+**Phase 3: Callback Server** *(depends on Phase 2)*
+9. Create ephemeral HTTP server in `pkg/auth/callback_server.go`: `StartCallbackServer(port, timeout)`
+10. Implement `/callback` handler: Extract code + state, validate state, exchange code for tokens using code_verifier
+11. Add callback result channel: Server blocks until callback received or timeout, then shuts down
+12. Implement token exchange in `pkg/auth/oidc_client.go`: POST to token endpoint with `grant_type=authorization_code`
+
+**Phase 4: Browser Launch & Authorization** *(depends on Phases 2 & 3)*
+13. Implement browser launcher in `pkg/auth/browser.go`: `OpenBrowser(url)` uses `os.Exec` with platform-specific commands
+14. Create authorization URL builder in `pkg/auth/oidc_client.go`: `BuildAuthorizeURL()` constructs OIDC authorize URL with PKCE
+15. Implement `InitiateAuthFlow()`: Generate PKCE → save state → start callback server → build URL → launch browser (fallback to print) → wait
+16. Handle auth timeout: Shutdown callback server and return error after configured timeout (default 120s)
+
+**Phase 5: Token Validation & Refresh** *(depends on Phase 2)*
+17. Implement token validator in `pkg/auth/token_validator.go`: `ValidateTokenOffline()` checks JWT expiry + signature using JWKS
+18. Add proactive refresh logic: `ShouldRefresh()` returns true if token expires within 5 minutes
+19. Create `RefreshTokens()` in `pkg/auth/oidc_client.go`: POST to token endpoint with `grant_type=refresh_token`
+20. Implement refresh mutex: Serialize concurrent refresh attempts with `sync.Mutex`
+
+**Phase 6: Vault JWT Authentication** *(depends on Phase 4)*
+21. Enhance vault_jwt.go: `AuthenticateWithOIDCToken()` calls `auth/{path}/login` with OIDC ID token
+22. Extract Vault token from response: Parse `auth.client_token` and TTL
+23. Cache Vault token: Add `vault_token` and `vault_token_expires_at` to TokenCache
+24. Implement Vault token validation: Check expiry before tool execution
+
+**Phase 7: Session Integration** *(depends on Phases 5 & 6)*
+25. Create AuthManager interface in `pkg/auth/manager.go`: Methods `GetOrAuthenticateVaultToken(ctx)`, `IsAuthenticated()`, `GetAuthStatus()`
+26. Implement startup auth sequence in main.go: Check cache → validate → if invalid, run `InitiateAuthFlow()` → obtain Vault token → cache
+27. Modify `OnRegisterSession` hook: Load cached Vault token from AuthManager → validate expiry → create Vault client → if expired, trigger refresh (blocks until complete)
+28. Add auth middleware: Before tool execution, check token validity and refresh if needed
+
+**Phase 8: Multi-Transport Support** *(parallel with Phase 7)*
+29. Abstract transport-specific logic: AuthManager works identically for stdio and HTTP
+30. Stdio mode: Callback server on :8765, MCP on stdio after auth
+31. HTTP mode: Callback server on :8765, MCP HTTP on different port
+32. Unified error handling: Same error messages and logging for both transports
+
+**Phase 9: Auth Status Visibility** *(depends on Phase 7)*
+33. Add MCP resource in tools.go: Register `mcp://auth/status` returning JSON auth state
+34. Add HTTP endpoint: `GET /auth/status` (HTTP mode only) returns same JSON
+35. Enhance logging: Log auth events (flow started, callback received, token refreshed, auth failed)
+
+**Phase 10: Backward Compatibility** *(depends on Phase 6)*
+36. Implement token source detection in client.go: Check `VAULT_TOKEN_SOURCE` env var (oidc|static|auto)
+37. Auto mode: Try cached OIDC → fallback to `VAULT_TOKEN` → error if neither
+38. Add deprecation warning: Log warning when static token used
+39. Update `CreateVaultClientForSession()`: Call AuthManager instead of directly reading env vars
+
+**Phase 11: Testing Infrastructure** *(parallel, can start early)*
+40. Create mock OIDC server in `pkg/auth/mock_idp_test.go`: Implements authorize, token, JWKS endpoints
+41. Write unit tests for PKCE, validation, refresh, cache persistence
+42. Create e2e test in `e2e/oidc_e2e_test.go`: Uses Auth0 test tenant, full flow from auth to tool execution
+43. Add integration test: Mock IdP → OIDC flow → mock Vault → verify Vault token obtained
+
+**Phase 12: Documentation** *(parallel with Phase 11)*
+44. Create `docs/OIDC_SETUP.md`: Step-by-step guide for Auth0/Okta configuration
+45. Add `docs/config.yaml.example`: Annotated OIDC settings
+46. Update README.md: Add OIDC auth section with quick start
+47. Document security tradeoffs: Note plaintext cache is M1 compromise
+
+---
+
+### Relevant Files
+
+**New Files:**
+- `pkg/auth/pkce.go` — PKCE code generation: `GeneratePKCEChallenge`, `GenerateState`
+- `pkg/auth/cache.go` — Token cache persistence: `TokenCache` type, `SaveCache`, `LoadCache`
+- `pkg/auth/callback_server.go` — Ephemeral HTTP server: `StartCallbackServer`, `/callback` handler
+- `pkg/auth/oidc_client.go` — OIDC client: `BuildAuthorizeURL`, `ExchangeCodeForTokens`, `RefreshTokens`, `InitiateAuthFlow`
+- `pkg/auth/browser.go` — Browser launcher: `OpenBrowser`
+- `pkg/auth/token_validator.go` — Token validation: `ValidateTokenOffline`, `ShouldRefresh`
+- `pkg/auth/manager.go` — `AuthManager` interface and `DefaultAuthManager` implementation
+- `pkg/auth/mock_idp_test.go` — Mock OIDC server for testing
+- `docs/OIDC_SETUP.md` — Setup documentation
+- `e2e/oidc_e2e_test.go` — E2E test with real IdP
+
+**Modified Files:**
+- main.go — Add startup auth sequence, modify OnRegisterSession, add `/auth/status` endpoint
+- config.go — Add OIDC config loading with file + env var merging
+- vault_jwt.go — Enhance to work with OIDC tokens from AuthManager
+- client.go — Modify `CreateVaultClientForSession` to use AuthManager
+- tools.go — Register `mcp://auth/status` MCP resource
+
+**Reference Patterns:**
+- auth0.go — OAuth validator, JWKS caching pattern
+- token_exchange.go — Token exchange, HTTP client patterns
+- middleware.go — Context middleware for auth data
+
+---
+
+### Verification
+
+1. **Unit Tests Pass**: `go test pkg.` with mock IdP - PKCE, caching, validation, refresh logic
+2. **E2E Test with Auth0**: Full flow with Auth0 test tenant - OIDC auth → JWT → Vault token → tool execution
+3. **Manual stdio Test**: Start stdio mode with `OIDC_ISSUER`, verify callback server starts, browser opens, MCP session established
+4. **Manual HTTP Test**: Start HTTP mode, verify callback and MCP servers coexist on different ports
+5. **Token Refresh Test**: Set 5-minute expiry, wait, make tool call, verify silent refresh without user interaction
+6. **Concurrent Session Test**: Start 3 MCP clients simultaneously, verify each gets authenticated session
+7. **Backward Compat Test**: Set `VAULT_TOKEN` without OIDC config, verify works with deprecation warning
+8. **Cache Persistence Test**: Authenticate, restart server, verify cached token reused (no browser popup)
+9. **Auth Status Test**: Query `mcp://auth/status`, verify accurate auth state and expiry times
+10. **Timeout Test**: Start auth flow but don't complete, verify server times out after configured duration
+
+---
+
+### Decisions
+
+**Architecture:**
+- **Pre-authenticated pattern**: Auth at startup before MCP session to satisfy PRD "before establishing session" requirement
+- **Ephemeral callback server**: Starts on-demand at :8765, shuts down after auth to minimize resource usage
+- **Unified transport**: Same AuthManager code for stdio and HTTP transports, auto-detected
+- **Single-user model**: One server instance = one authenticated user, designed for future multi-user extension
+
+**Security Tradeoffs:**
+- **Plaintext token cache**: M1 uses plaintext JSON for simplicity (documented risk, recommend OS keychain for production)
+- **Fixed callback port**: :8765 configurable but fixed by default (ephemeral lifecycle mitigates port conflicts)
+- **Token refresh strategy**: Proactive refresh 5 minutes before expiry balances UX vs. security
+
+**Backward Compatibility:**
+- **Hybrid support**: Both OIDC and static `VAULT_TOKEN` work, static logs deprecation warning
+- **Configurable token source**: `VAULT_TOKEN_SOURCE=auto` tries OIDC first, falls back to static
+
+**Scope:**
+- **Included**: OIDC Authorization Code + PKCE, token caching, refresh, Vault JWT auth, both transports, auth status visibility
+- **Excluded**: Device flow (future), OS keychain (future), auto Vault JWT auth setup, multi-user per-instance (future), logout
+- **Deferred**: Vault token renewal strategy, capability check timing, auth failure retry UX
+
+---
+
+### Further Considerations
+
+**1. Security: Plaintext Token Cache**
+Tokens stored in plaintext at `~/.vault-mcp/auth-cache.json` is a security risk.
+- **Option A**: Add `OIDC_TOKEN_CACHE_ENCRYPT=true` for machine-specific encryption
+- **Option B**: Integrate OS keychain (macOS Keychain, Windows Credential Manager)
+- **Option C**: Document limitation, defer to M2
+
+**2. Token Refresh During Tool Execution**
+Synchronous refresh adds latency mid-tool-call.
+- **Option A**: Background refresh worker checks every 60s, refreshes proactively below threshold
+- **Option B**: Keep synchronous refresh, accept latency tradeoff
+- **Option C**: Hybrid - background worker + on-demand fallback
+
+**3. Callback Server Port Conflicts**
+Port :8765 may be in use, causing auth failure.
+- **Option A**: Implement port conflict detection with dynamic port fallback
+- **Option B**: Document port conflict troubleshooting in setup guide
+- **Option C**: Support wildcard redirect URI `http://localhost:*/callback` if IdP allows
+
+**4. Stdio Mode Browser Visibility**
+In Claude Desktop, stderr URL may not be visible to user.
+- **Option A**: Add MCP notification mechanism for auth URLs
+- **Option B**: Desktop notification if supported by platform
+- **Option C**: Document limitation in setup guide
+
+**5. Multi-User Future Extension**
+Design should not prevent future multi-user support.
+- **Recommendation**: Add `user_id` field to `TokenCache` (from OIDC sub) even if unused. Design `AuthManager` API to accept optional `userID` parameter.
+
+**6. IdP Discovery**
+User must manually configure OIDC issuer URL.
+- **Recommendation**: Support OIDC discovery - accept domain only (e.g., `auth0.com`), auto-append `.well-known/openid-configuration`.
+
+---
+
+**The plan is saved to `/memories/session/plan.md` for persistence.**
+
+Ready for your review! What would you like to adjust or clarify?
