@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	stdlog "log"
@@ -115,8 +116,27 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Initialize authentication manager
+	if err := InitAuthManager(logger); err != nil {
+		return fmt.Errorf("failed to initialize auth manager: %w", err)
+	}
+
+	// Set the AuthManager getter for client package
+	client.SetAuthManagerGetter(GetAuthManager)
+
+	// Authenticate if OIDC is enabled
+	if IsOIDCEnabled() {
+		if err := AuthenticateIfNeeded(ctx, logger); err != nil {
+			return fmt.Errorf("authentication required but failed: %w", err)
+		}
+	}
+
 	hcServer := NewServer(version.Version, logger)
 	tools.InitTools(hcServer, logger)
+
+	// Initialize auth resources (auth status)
+	authManager := GetAuthManager()
+	tools.InitAuthResources(hcServer, authManager, logger)
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
 }
@@ -209,6 +229,30 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		}
 	})
 
+	// Add auth status endpoint for HTTP mode
+	mux.HandleFunc("/auth/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		authManager := GetAuthManager()
+		if authManager == nil {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"oidc_enabled":false,"message":"OIDC authentication is not enabled"}`))
+			return
+		}
+
+		status := authManager.GetAuthStatus()
+		statusJSON, err := json.Marshal(status)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"Failed to marshal auth status"}`))
+			logger.WithError(err).Error("Failed to marshal auth status")
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write(statusJSON)
+	})
+
 	addr := fmt.Sprintf("%s:%s", host, port)
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -256,8 +300,27 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Initialize authentication manager
+	if err := InitAuthManager(logger); err != nil {
+		return fmt.Errorf("failed to initialize auth manager: %w", err)
+	}
+
+	// Set the AuthManager getter for client package
+	client.SetAuthManagerGetter(GetAuthManager)
+
+	// Authenticate if OIDC is enabled
+	if IsOIDCEnabled() {
+		if err := AuthenticateIfNeeded(ctx, logger); err != nil {
+			return fmt.Errorf("authentication required but failed: %w", err)
+		}
+	}
+
 	hcServer := NewServer(version.Version, logger)
 	tools.InitTools(hcServer, logger)
+
+	// Initialize auth resources (auth status)
+	authManager := GetAuthManager()
+	tools.InitAuthResources(hcServer, authManager, logger)
 
 	return serverInit(ctx, hcServer, logger)
 }

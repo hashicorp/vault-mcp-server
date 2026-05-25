@@ -104,6 +104,11 @@ func (c *OIDCClient) BuildAuthorizeURL(codeChallenge, state string) string {
 	params.Set("code_challenge", codeChallenge)
 	params.Set("code_challenge_method", "S256")
 
+	// Add audience if configured (required for Okta to include aud claim)
+	if c.config.Audience != "" {
+		params.Set("audience", c.config.Audience)
+	}
+
 	// Add prompt=consent to ensure refresh token is issued
 	if c.config.RequestRefreshToken {
 		params.Set("prompt", "consent")

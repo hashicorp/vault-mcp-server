@@ -209,6 +209,30 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 
 	// Check for JWT authentication first
 	jwtToken := getEnv(VaultJWTToken, "")
+
+	// If no JWT token in env, try to get from AuthManager
+	if jwtToken == "" {
+		logger.WithField("session_id", session.SessionID()).Debug("No JWT token in environment, checking AuthManager")
+		if vaultToken, err := GetVaultTokenFromAuthManager(ctx, logger); err == nil {
+			logger.WithField("session_id", session.SessionID()).Info("Using Vault token from OIDC AuthManager")
+
+			newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken, vaultNamespace)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Vault client with OIDC token: %v", err)
+			}
+
+			logger.WithFields(log.Fields{
+				"session_id": session.SessionID(),
+				"vault_addr": vaultAddress,
+				"auth_type":  "oidc",
+			}).Info("Created Vault client with OIDC authentication")
+
+			return newClient, nil
+		} else {
+			logger.WithError(err).Debug("AuthManager not available or failed")
+		}
+	}
+
 	if jwtToken != "" {
 		logger.WithField("session_id", session.SessionID()).Info("Using JWT authentication for Vault")
 

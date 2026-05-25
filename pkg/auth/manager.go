@@ -150,10 +150,10 @@ func (am *DefaultAuthManager) GetOrAuthenticateVaultToken(ctx context.Context) (
 		am.cacheMu.RUnlock()
 	}
 
-	// Authenticate with Vault using ID token
+	// Authenticate with Vault using access token (has correct audience)
 	if cache.VaultToken == "" || cache.IsVaultTokenExpired() {
 		am.logger.Info("Authenticating with Vault using OIDC token")
-		vaultToken, vaultTokenExpiry, err := am.authenticateVault(cache.IDToken)
+		vaultToken, vaultTokenExpiry, err := am.authenticateVault(cache.AccessToken)
 		if err != nil {
 			return "", fmt.Errorf("Vault authentication failed: %w", err)
 		}
@@ -330,10 +330,10 @@ func (am *DefaultAuthManager) refreshTokens() error {
 	return nil
 }
 
-// authenticateVault authenticates with Vault using the OIDC ID token
-func (am *DefaultAuthManager) authenticateVault(idToken string) (string, time.Time, error) {
-	if idToken == "" {
-		return "", time.Time{}, fmt.Errorf("ID token is empty")
+// authenticateVault authenticates with Vault using the OIDC access token
+func (am *DefaultAuthManager) authenticateVault(accessToken string) (string, time.Time, error) {
+	if accessToken == "" {
+		return "", time.Time{}, fmt.Errorf("access token is empty")
 	}
 
 	vaultAddr := os.Getenv("VAULT_ADDR")
@@ -341,9 +341,9 @@ func (am *DefaultAuthManager) authenticateVault(idToken string) (string, time.Ti
 		vaultAddr = "http://127.0.0.1:8200"
 	}
 
-	// Create config with the ID token
+	// Create config with the access token
 	config := am.vaultJWTConfig
-	config.JWTToken = idToken
+	config.JWTToken = accessToken
 	config.Enabled = true
 
 	am.logger.WithFields(log.Fields{

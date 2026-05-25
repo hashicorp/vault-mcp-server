@@ -89,6 +89,7 @@ type OIDCConfig struct {
 	ClientID     string   `yaml:"client_id" json:"client_id"`                   // OAuth 2.0 client ID
 	ClientSecret string   `yaml:"client_secret" json:"client_secret,omitempty"` // Optional client secret (for confidential clients)
 	RedirectURI  string   `yaml:"redirect_uri" json:"redirect_uri"`             // OAuth callback URL (e.g., http://localhost:8765/callback)
+	Audience     string   `yaml:"audience" json:"audience,omitempty"`           // Token audience (must match Vault bound_audiences)
 	Scopes       []string `yaml:"scopes" json:"scopes"`                         // Requested scopes (e.g., openid, profile, email)
 
 	// Flow settings
@@ -308,6 +309,7 @@ func ValidateOIDCConfig(config OIDCConfig, logger *log.Logger) error {
 		"issuer":       config.Issuer,
 		"client_id":    config.ClientID,
 		"redirect_uri": config.RedirectURI,
+		"audience":     config.Audience,
 		"scopes":       strings.Join(config.Scopes, ", "),
 		"auth_timeout": config.AuthTimeout,
 	}).Debug("OIDC configuration")
