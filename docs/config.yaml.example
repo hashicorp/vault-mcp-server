@@ -1,0 +1,73 @@
+# Vault MCP Server Configuration Example
+# Place this file at ~/.vault-mcp/config.yaml
+# Environment variables will override these settings
+
+# OIDC Authentication Configuration
+oidc:
+  # Enable OIDC authentication
+  enabled: true
+  
+  # OIDC Provider Settings
+  issuer: "https://your-tenant.us.auth0.com"  # Or Okta: https://dev-12345.okta.com
+  client_id: "your_client_id_here"
+  # client_secret: "your_client_secret_here"  # Optional, for confidential clients
+  
+  # OAuth Callback URL (must match IdP configuration)
+  redirect_uri: "http://localhost:8765/callback"
+  
+  # Requested OAuth scopes
+  scopes:
+    - openid
+    - profile
+    - email
+    - offline_access  # For refresh token support
+  
+  # Authentication Flow Settings
+  auth_timeout: 120s  # How long to wait for user to complete authentication
+  request_refresh_token: true  # Request refresh token for silent renewal
+  
+  # Token Refresh Settings  
+  refresh_threshold: 5m  # Refresh token when it expires within this duration
+  
+  # Vault Token Source
+  # Options: oidc (always use OIDC), static (use VAULT_TOKEN env var), auto (try OIDC first, fallback to static)
+  vault_token_source: "auto"
+
+# Legacy OAuth Validator Configuration (for existing HTTP-based JWT validation)
+oauth:
+  provider: "auth0"  # or "okta"
+  domain: "your-tenant.us.auth0.com"
+  audience: "your_api_audience"
+  required_scopes:
+    - "mcp:tools"
+    - "mcp:resources"
+  enabled: false  # Keep disabled if using OIDC auth above
+
+---
+
+# Environment Variable Reference
+# All config file values can be overridden via environment variables:
+
+# OIDC Settings
+# OIDC_ISSUER=https://your-tenant.us.auth0.com
+# OIDC_CLIENT_ID=your_client_id
+# OIDC_CLIENT_SECRET=your_client_secret  # Optional
+# OIDC_REDIRECT_URI=http://localhost:8765/callback
+# OIDC_SCOPES=openid,profile,email,offline_access
+# OIDC_AUTH_TIMEOUT_SECONDS=120
+# OIDC_REQUEST_REFRESH_TOKEN=true
+# OIDC_REFRESH_THRESHOLD_SECONDS=300
+
+# Vault Settings
+# VAULT_ADDR=http://127.0.0.1:8200
+# VAULT_TOKEN=your_static_token  # Legacy mode
+# VAULT_TOKEN_SOURCE=auto  # oidc, static, or auto
+# VAULT_JWT_ROLE=mcp-role
+# VAULT_JWT_AUTH_PATH=oidc
+# VAULT_NAMESPACE=your_namespace  # Optional
+
+# Server Settings
+# MCP_TRANSPORT=http  # or stdio
+# MCP_HTTP_PORT=8080
+# MCP_TLS_CERT_FILE=/path/to/cert.pem
+# MCP_TLS_KEY_FILE=/path/to/key.pem
