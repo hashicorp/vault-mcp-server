@@ -127,7 +127,13 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 		if !ok {
 			return mcp.NewToolResultError("unexpected secret data format for v2 API"), nil
 		}
-		secretData = data
+		// Include the KV v2 metadata block (version, created/updated times and
+		// custom_metadata such as description/usage) alongside the data payload,
+		// instead of discarding it — clients need it to understand a secret.
+		secretData = map[string]interface{}{
+			"data":     data,
+			"metadata": secret.Data["metadata"],
+		}
 	} else {
 		// V1 API structure: secret.Data directly contains the key-value pairs
 		secretData = secret.Data
