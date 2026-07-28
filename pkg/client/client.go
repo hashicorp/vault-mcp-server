@@ -5,6 +5,8 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -17,9 +19,23 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// sessionEntry binds a cached Vault client to the hash of the token that
+// created it. A session ID alone must never be sufficient to retrieve the
+// client — the caller also has to present the matching Vault token on the
+// current request, otherwise a leaked/guessed MCP session ID could be used
+// to impersonate the client that originally established the session.
+type sessionEntry struct {
+	client    *api.Client
+	tokenHash [32]byte
+}
+
 var (
-	activeClients sync.Map
+	activeClients sync.Map // sessionId -> *sessionEntry
 )
+
+func hashToken(token string) [32]byte {
+	return sha256.Sum256([]byte(token))
+}
 
 const (
 	VaultAddress         = "VAULT_ADDR"
@@ -65,15 +81,25 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 		client.SetNamespace(vaultNamespace)
 	}
 
-	activeClients.Store(sessionId, client)
+	activeClients.Store(sessionId, &sessionEntry{client: client, tokenHash: hashToken(vaultToken)})
 
 	return client, nil
 }
 
 // GetVaultClient retrieves the Vault client for the given session
 func GetVaultClient(sessionId string) *api.Client {
+	if entry := getSessionEntry(sessionId); entry != nil {
+		return entry.client
+	}
+	return nil
+}
+
+// getSessionEntry retrieves the cached client along with the token hash it
+// was created with, so callers can verify the current request's token
+// matches before trusting the cached client.
+func getSessionEntry(sessionId string) *sessionEntry {
 	if value, ok := activeClients.Load(sessionId); ok {
-		return value.(*api.Client)
+		return value.(*sessionEntry)
 	}
 	return nil
 }
@@ -83,7 +109,14 @@ func DeleteVaultClient(sessionId string) {
 	activeClients.Delete(sessionId)
 }
 
-// GetVaultClientFromContext extracts Vault client from the MCP context
+// GetVaultClientFromContext extracts Vault client from the MCP context.
+//
+// The MCP session ID alone is never trusted to authorize access to a cached
+// client: the token resolved for the current request must match the token
+// hash recorded when that client was created. This prevents a leaked or
+// guessed MCP session ID from being replayed by a different caller to
+// impersonate the client that originally established the session and its
+// Vault token.
 func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Client, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
@@ -93,15 +126,52 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 	// Log the session ID for debugging
 	logger.WithField("session_id", session.SessionID()).Debug("Retrieving Vault client for session")
 
-	// Try to get existing client
-	client := GetVaultClient(session.SessionID())
-	if client != nil {
-		return client, nil
+	requestToken := resolveVaultToken(ctx)
+
+	if entry := getSessionEntry(session.SessionID()); entry != nil {
+		if requestToken == "" {
+			return nil, fmt.Errorf("vault token required for this request")
+		}
+
+		currentHash := hashToken(requestToken)
+		if subtle.ConstantTimeCompare(entry.tokenHash[:], currentHash[:]) == 1 {
+			return entry.client, nil
+		}
+
+		// The token presented on this request doesn't match the one this
+		// session was created with. Never fall back to the cached client —
+		// that would let a caller with a different (or no) token reuse
+		// another caller's already-authenticated Vault client. Rebuild a
+		// client bound to the current request's token instead; if that
+		// token is invalid or unauthorized, Vault itself will reject it.
+		logger.WithField("session_id", session.SessionID()).Info("Vault token for session changed; rebuilding client")
+		return CreateVaultClientForSession(ctx, session, logger)
 	}
 
 	logger.WithField("session_id", session.SessionID()).Warn("Vault client not found, creating a new one")
 
 	return CreateVaultClientForSession(ctx, session, logger)
+}
+
+// resolveVaultToken resolves the Vault token for the current request, using
+// the same precedence CreateVaultClientForSession uses: request context
+// (populated from the X-Vault-Token header or query parameter by
+// VaultContextMiddleware) first, then the server's own environment variable
+// as a fallback.
+func resolveVaultToken(ctx context.Context) string {
+	if v, ok := ctx.Value(contextKey(VaultToken)).(string); ok && v != "" {
+		return v
+	}
+	return getEnv(VaultToken, "")
+}
+
+// WithVaultToken returns a copy of ctx carrying the given Vault token under
+// the same context key VaultContextMiddleware populates from the
+// X-Vault-Token header. It lets callers outside of an HTTP request (e.g.
+// tests) construct a context usable with GetVaultClientFromContext and
+// CreateVaultClientForSession.
+func WithVaultToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, contextKey(VaultToken), token)
 }
 
 func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
@@ -112,13 +182,9 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
-	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
-	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultToken, "")
-		if vaultToken == "" {
-			//logger.Warn("Vault token not provided for session")
-			return nil, fmt.Errorf("vault token not provided for session")
-		}
+	vaultToken := resolveVaultToken(ctx)
+	if vaultToken == "" {
+		return nil, fmt.Errorf("vault token not provided for session")
 	}
 
 	vaultNamespace, ok := ctx.Value(contextKey(VaultNamespace)).(string)

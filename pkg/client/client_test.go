@@ -41,6 +41,363 @@ func TestGetEnv(t *testing.T) {
 	}
 }
 
+// TestHashToken tests the token hashing function for security
+func TestHashToken(t *testing.T) {
+	tests := []struct {
+		name     string
+		token    string
+		validate func(t *testing.T, hash [32]byte)
+	}{
+		{
+			name:  "empty string produces valid hash",
+			token: "",
+			validate: func(t *testing.T, hash [32]byte) {
+				assert.Equal(t, 32, len(hash))
+			},
+		},
+		{
+			name:  "same token produces same hash (deterministic)",
+			token: "test-token-123",
+			validate: func(t *testing.T, hash [32]byte) {
+				hash2 := hashToken("test-token-123")
+				assert.Equal(t, hash, hash2)
+			},
+		},
+		{
+			name:  "different tokens produce different hashes",
+			token: "token-1",
+			validate: func(t *testing.T, hash [32]byte) {
+				hash2 := hashToken("token-2")
+				assert.NotEqual(t, hash, hash2)
+			},
+		},
+		{
+			name:  "hash length is always 32 bytes",
+			token: "very-long-token-with-many-characters-to-test-hash-length",
+			validate: func(t *testing.T, hash [32]byte) {
+				assert.Equal(t, 32, len(hash))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hash := hashToken(tt.token)
+			tt.validate(t, hash)
+		})
+	}
+}
+
+// TestGetVaultClient tests retrieving cached Vault clients
+func TestGetVaultClient(t *testing.T) {
+	t.Run("returns nil when session doesn't exist", func(t *testing.T) {
+		client := GetVaultClient("non-existent-session")
+		assert.Nil(t, client)
+	})
+
+	t.Run("returns client when session exists", func(t *testing.T) {
+		sessionID := "test-session-get"
+		vaultAddress := "http://127.0.0.1:8200"
+		vaultToken := "test-token"
+
+		// Create a client
+		_, err := NewVaultClient(sessionID, vaultAddress, false, vaultToken, "")
+		assert.NoError(t, err)
+
+		// Retrieve it
+		client := GetVaultClient(sessionID)
+		assert.NotNil(t, client)
+		assert.Equal(t, vaultAddress, client.Address())
+
+		// Cleanup
+		DeleteVaultClient(sessionID)
+	})
+
+	t.Run("returns correct client for specific session", func(t *testing.T) {
+		session1 := "session-1"
+		session2 := "session-2"
+		addr1 := "http://vault1.example.com"
+		addr2 := "http://vault2.example.com"
+
+		// Create two different clients
+		_, err := NewVaultClient(session1, addr1, false, "token1", "")
+		assert.NoError(t, err)
+		_, err = NewVaultClient(session2, addr2, false, "token2", "")
+		assert.NoError(t, err)
+
+		// Verify each returns correct client
+		client1 := GetVaultClient(session1)
+		client2 := GetVaultClient(session2)
+		assert.NotNil(t, client1)
+		assert.NotNil(t, client2)
+		assert.Equal(t, addr1, client1.Address())
+		assert.Equal(t, addr2, client2.Address())
+
+		// Cleanup
+		DeleteVaultClient(session1)
+		DeleteVaultClient(session2)
+	})
+}
+
+// TestGetSessionEntry tests retrieving session entries with token hashes
+func TestGetSessionEntry(t *testing.T) {
+	t.Run("returns nil when session doesn't exist", func(t *testing.T) {
+		entry := getSessionEntry("non-existent-session")
+		assert.Nil(t, entry)
+	})
+
+	t.Run("returns entry when session exists", func(t *testing.T) {
+		sessionID := "test-session-entry"
+		vaultToken := "test-token-entry"
+
+		// Create a client
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, vaultToken, "")
+		assert.NoError(t, err)
+
+		// Retrieve entry
+		entry := getSessionEntry(sessionID)
+		assert.NotNil(t, entry)
+		assert.NotNil(t, entry.client)
+
+		// Cleanup
+		DeleteVaultClient(sessionID)
+	})
+
+	t.Run("returns entry with correct token hash", func(t *testing.T) {
+		sessionID := "test-session-hash"
+		vaultToken := "test-token-hash"
+		expectedHash := hashToken(vaultToken)
+
+		// Create a client
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, vaultToken, "")
+		assert.NoError(t, err)
+
+		// Retrieve entry and verify hash
+		entry := getSessionEntry(sessionID)
+		assert.NotNil(t, entry)
+		assert.Equal(t, expectedHash, entry.tokenHash)
+
+		// Cleanup
+		DeleteVaultClient(sessionID)
+	})
+}
+
+// TestDeleteVaultClient tests removing cached Vault clients
+func TestDeleteVaultClient(t *testing.T) {
+	t.Run("successfully deletes existing session", func(t *testing.T) {
+		sessionID := "test-delete-session"
+
+		// Create a client
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, "test-token", "")
+		assert.NoError(t, err)
+
+		// Verify it exists
+		client := GetVaultClient(sessionID)
+		assert.NotNil(t, client)
+
+		// Delete it
+		DeleteVaultClient(sessionID)
+
+		// Verify it's gone
+		client = GetVaultClient(sessionID)
+		assert.Nil(t, client)
+	})
+
+	t.Run("handles deletion of non-existent session gracefully", func(t *testing.T) {
+		// Should not panic
+		assert.NotPanics(t, func() {
+			DeleteVaultClient("non-existent-session")
+		})
+	})
+
+	t.Run("subsequent GetVaultClient returns nil after deletion", func(t *testing.T) {
+		sessionID := "test-delete-verify"
+
+		// Create, delete, and verify
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, "test-token", "")
+		assert.NoError(t, err)
+
+		DeleteVaultClient(sessionID)
+
+		client := GetVaultClient(sessionID)
+		assert.Nil(t, client)
+
+		entry := getSessionEntry(sessionID)
+		assert.Nil(t, entry)
+	})
+}
+
+// TestResolveVaultToken tests token resolution from context and environment
+func TestResolveVaultToken(t *testing.T) {
+	t.Run("returns token from context when present", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), contextKey(VaultToken), "context-token")
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "context-token", token)
+	})
+
+	t.Run("falls back to environment variable when context empty", func(t *testing.T) {
+		t.Setenv(VaultToken, "env-token")
+		ctx := context.Background()
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "env-token", token)
+	})
+
+	t.Run("returns empty string when neither context nor env set", func(t *testing.T) {
+		// Unset environment variable
+		prevVal, wasSet := os.LookupEnv(VaultToken)
+		os.Unsetenv(VaultToken)
+		t.Cleanup(func() {
+			if wasSet {
+				os.Setenv(VaultToken, prevVal)
+			}
+		})
+
+		ctx := context.Background()
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "", token)
+	})
+
+	t.Run("context takes precedence over environment", func(t *testing.T) {
+		t.Setenv(VaultToken, "env-token")
+		ctx := context.WithValue(context.Background(), contextKey(VaultToken), "context-token")
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "context-token", token)
+	})
+
+	t.Run("empty string in context falls back to env", func(t *testing.T) {
+		t.Setenv(VaultToken, "env-token")
+		ctx := context.WithValue(context.Background(), contextKey(VaultToken), "")
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "env-token", token)
+	})
+}
+
+// TestWithVaultToken tests the context helper function
+func TestWithVaultToken(t *testing.T) {
+	t.Run("adds token to context correctly", func(t *testing.T) {
+		ctx := context.Background()
+		token := "test-token-123"
+
+		newCtx := WithVaultToken(ctx, token)
+
+		retrievedToken := newCtx.Value(contextKey(VaultToken))
+		assert.Equal(t, token, retrievedToken)
+	})
+
+	t.Run("token can be retrieved with correct context key", func(t *testing.T) {
+		ctx := WithVaultToken(context.Background(), "my-token")
+
+		// Should work with resolveVaultToken
+		token := resolveVaultToken(ctx)
+		assert.Equal(t, "my-token", token)
+	})
+
+	t.Run("works with background context", func(t *testing.T) {
+		ctx := WithVaultToken(context.Background(), "bg-token")
+		assert.NotNil(t, ctx)
+		assert.Equal(t, "bg-token", ctx.Value(contextKey(VaultToken)))
+	})
+
+	t.Run("works with existing context values", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), contextKey("other-key"), "other-value")
+		ctx = WithVaultToken(ctx, "new-token")
+
+		assert.Equal(t, "new-token", ctx.Value(contextKey(VaultToken)))
+		assert.Equal(t, "other-value", ctx.Value(contextKey("other-key")))
+	})
+
+	t.Run("multiple calls create independent contexts", func(t *testing.T) {
+		ctx1 := WithVaultToken(context.Background(), "token-1")
+		ctx2 := WithVaultToken(context.Background(), "token-2")
+
+		assert.Equal(t, "token-1", ctx1.Value(contextKey(VaultToken)))
+		assert.Equal(t, "token-2", ctx2.Value(contextKey(VaultToken)))
+	})
+}
+
+// TestGetVaultClientFromContext tests the main client retrieval function with security checks
+func TestGetVaultClientFromContext(t *testing.T) {
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	t.Run("error when no session in context", func(t *testing.T) {
+		ctx := context.Background()
+		client, err := GetVaultClientFromContext(ctx, logger)
+		assert.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "no active session")
+	})
+
+	// The following tests verify the security logic of token hash validation
+	// by testing the underlying functions that GetVaultClientFromContext uses
+	// Note: Full integration testing requires the mcp-go server context setup
+
+	t.Run("token hash validation - matching tokens", func(t *testing.T) {
+		sessionID := "test-hash-match"
+		token := "test-token-123"
+
+		// Create a client with a token
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, token, "")
+		assert.NoError(t, err)
+		t.Cleanup(func() { DeleteVaultClient(sessionID) })
+
+		// Verify the token hash is stored correctly
+		entry := getSessionEntry(sessionID)
+		assert.NotNil(t, entry)
+		expectedHash := hashToken(token)
+		assert.Equal(t, expectedHash, entry.tokenHash)
+
+		// Verify same token produces same hash (security requirement)
+		currentHash := hashToken(token)
+		assert.Equal(t, entry.tokenHash, currentHash)
+	})
+
+	t.Run("token hash validation - different tokens produce different hashes", func(t *testing.T) {
+		sessionID := "test-hash-mismatch"
+		originalToken := "original-token"
+		differentToken := "different-token"
+
+		// Create a client with original token
+		_, err := NewVaultClient(sessionID, "http://127.0.0.1:8200", false, originalToken, "")
+		assert.NoError(t, err)
+		t.Cleanup(func() { DeleteVaultClient(sessionID) })
+
+		// Get the stored hash
+		entry := getSessionEntry(sessionID)
+		assert.NotNil(t, entry)
+		originalHash := entry.tokenHash
+
+		// Verify different token produces different hash
+		differentHash := hashToken(differentToken)
+		assert.NotEqual(t, originalHash, differentHash)
+	})
+
+	t.Run("session isolation - different sessions have independent clients", func(t *testing.T) {
+		session1 := "isolated-session-1"
+		session2 := "isolated-session-2"
+		token1 := "token-1"
+		token2 := "token-2"
+
+		// Create two clients
+		_, err := NewVaultClient(session1, "http://vault1.example.com", false, token1, "")
+		assert.NoError(t, err)
+		_, err = NewVaultClient(session2, "http://vault2.example.com", false, token2, "")
+		assert.NoError(t, err)
+		t.Cleanup(func() {
+			DeleteVaultClient(session1)
+			DeleteVaultClient(session2)
+		})
+
+		// Verify each session has its own client and token hash
+		entry1 := getSessionEntry(session1)
+		entry2 := getSessionEntry(session2)
+		assert.NotNil(t, entry1)
+		assert.NotNil(t, entry2)
+		assert.NotEqual(t, entry1.client, entry2.client)
+		assert.NotEqual(t, entry1.tokenHash, entry2.tokenHash)
+	})
+}
+
 func TestNewVaultClient(t *testing.T) {
 	// This is a basic test that checks if the function doesn't panic
 	// In a real scenario, you'd want to mock the Vault API
@@ -69,6 +426,17 @@ func (m *mockClientSession) Initialize()                                        
 func (m *mockClientSession) Initialized() bool                                  { return true }
 func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return make(chan mcp.JSONRPCNotification, 1) }
 func (m *mockClientSession) SessionID() string                                  { return m.id }
+
+// contextWithSession adds a mock session to the context using reflection to match
+// the internal context key used by mcp-go/server package
+func contextWithSession(ctx context.Context, session *mockClientSession) context.Context {
+	// The server package uses an unexported context key, so we need to use
+	// a workaround. We'll create a context that returns our session when
+	// server.ClientSessionFromContext is called.
+	// Since we can't access the internal key, we'll test the functions that
+	// don't require GetVaultClientFromContext or use CreateVaultClientForSession directly
+	return context.WithValue(ctx, contextKey("mcp.client.session"), session)
+}
 
 func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	logger := log.New()
