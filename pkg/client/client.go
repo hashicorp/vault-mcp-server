@@ -19,11 +19,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// sessionEntry binds a cached Vault client to the hash of the token that
-// created it. A session ID alone must never be sufficient to retrieve the
-// client — the caller also has to present the matching Vault token on the
-// current request, otherwise a leaked/guessed MCP session ID could be used
-// to impersonate the client that originally established the session.
+// sessionEntry caches a Vault client with its token hash. Requires both
+// session ID and matching token to prevent session hijacking via leaked IDs.
 type sessionEntry struct {
 	client    *api.Client
 	tokenHash [32]byte
@@ -94,9 +91,7 @@ func GetVaultClient(sessionId string) *api.Client {
 	return nil
 }
 
-// getSessionEntry retrieves the cached client along with the token hash it
-// was created with, so callers can verify the current request's token
-// matches before trusting the cached client.
+// getSessionEntry retrieves the cached client and token hash for verification.
 func getSessionEntry(sessionId string) *sessionEntry {
 	if value, ok := activeClients.Load(sessionId); ok {
 		return value.(*sessionEntry)
@@ -110,13 +105,8 @@ func DeleteVaultClient(sessionId string) {
 }
 
 // GetVaultClientFromContext extracts Vault client from the MCP context.
-//
-// The MCP session ID alone is never trusted to authorize access to a cached
-// client: the token resolved for the current request must match the token
-// hash recorded when that client was created. This prevents a leaked or
-// guessed MCP session ID from being replayed by a different caller to
-// impersonate the client that originally established the session and its
-// Vault token.
+// Validates that the current request's token matches the cached token hash
+// to prevent session hijacking via leaked or guessed session IDs.
 func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Client, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
@@ -138,12 +128,8 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 			return entry.client, nil
 		}
 
-		// The token presented on this request doesn't match the one this
-		// session was created with. Never fall back to the cached client —
-		// that would let a caller with a different (or no) token reuse
-		// another caller's already-authenticated Vault client. Rebuild a
-		// client bound to the current request's token instead; if that
-		// token is invalid or unauthorized, Vault itself will reject it.
+		// Token mismatch: rebuild client with current token instead of
+		// reusing cached client. Vault will reject invalid tokens.
 		logger.WithField("session_id", session.SessionID()).Info("Vault token for session changed; rebuilding client")
 		return CreateVaultClientForSession(ctx, session, logger)
 	}
@@ -153,11 +139,8 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 	return CreateVaultClientForSession(ctx, session, logger)
 }
 
-// resolveVaultToken resolves the Vault token for the current request, using
-// the same precedence CreateVaultClientForSession uses: request context
-// (populated from the X-Vault-Token header or query parameter by
-// VaultContextMiddleware) first, then the server's own environment variable
-// as a fallback.
+// resolveVaultToken resolves the Vault token from request context
+// (X-Vault-Token header/query param) or VAULT_TOKEN env var as fallback.
 func resolveVaultToken(ctx context.Context) string {
 	if v, ok := ctx.Value(contextKey(VaultToken)).(string); ok && v != "" {
 		return v
@@ -165,11 +148,8 @@ func resolveVaultToken(ctx context.Context) string {
 	return getEnv(VaultToken, "")
 }
 
-// WithVaultToken returns a copy of ctx carrying the given Vault token under
-// the same context key VaultContextMiddleware populates from the
-// X-Vault-Token header. It lets callers outside of an HTTP request (e.g.
-// tests) construct a context usable with GetVaultClientFromContext and
-// CreateVaultClientForSession.
+// WithVaultToken returns a context with the given Vault token, using the
+// same key as VaultContextMiddleware. Useful for tests and non-HTTP callers.
 func WithVaultToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, contextKey(VaultToken), token)
 }
