@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/oauth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,10 +46,36 @@ type InitializeResponse struct {
 	ID int `json:"id"`
 }
 
+func testOAuthSecret() string {
+	key := make([]byte, 32)
+	return base64.RawURLEncoding.EncodeToString(key)
+}
+
+func mintTestAccessToken(t *testing.T, secret string) string {
+	t.Helper()
+
+	sealer, err := oauth.NewSealer(secret)
+	require.NoError(t, err)
+
+	svc := oauth.NewService(sealer, time.Now)
+	tok, _, err := svc.Mint(string(oauth.TokenTypeAccessToken), 24*time.Hour, oauth.AccessTokenData{
+		VaultToken:           "test-token",
+		VaultAddr:            "http://127.0.0.1:8200",
+		VaultNamespace:       "",
+		CreatedAtUnixSeconds: time.Now().UTC().Unix(),
+	})
+	require.NoError(t, err)
+
+	return tok
+}
+
 // TestCORSE2E tests CORS validation in the MCP server using direct HTTP requests
 func TestCORSE2E(t *testing.T) {
 	// Build the Docker image for our tests
 	buildDockerImage(t)
+
+	oauthSecret := testOAuthSecret()
+	accessToken := mintTestAccessToken(t, oauthSecret)
 
 	// Ensure all test containers are cleaned up at the end
 	t.Cleanup(func() {
@@ -72,7 +100,7 @@ func TestCORSE2E(t *testing.T) {
 			baseURL := fmt.Sprintf("http://localhost:%s", config.port)
 			mcpURL := fmt.Sprintf("%s/mcp", baseURL)
 
-			containerID := startHTTPContainerWithCORS(t, config.port, config.mode, config.origins)
+			containerID := startHTTPContainerWithCORS(t, config.port, config.mode, config.origins, oauthSecret)
 			defer func() {
 				stopCmd := exec.Command("docker", "stop", containerID)
 				stopCmd.Run()
@@ -81,18 +109,19 @@ func TestCORSE2E(t *testing.T) {
 			waitForCORSServer(t, baseURL)
 
 			// Now run the specific CORS tests for this configuration
-			runCORSTests(t, mcpURL, config.mode, config.origins)
+			runCORSTests(t, mcpURL, config.mode, config.origins, accessToken)
 		})
 	}
 }
 
 // startHTTPContainerWithCORS starts a Docker container with specific CORS settings
-func startHTTPContainerWithCORS(t *testing.T, port, mode, origins string) string {
+func startHTTPContainerWithCORS(t *testing.T, port, mode, origins, authSecret string) string {
 	portMapping := fmt.Sprintf("%s:8080", port)
 	cmd := exec.Command(
 		"docker", "run", "-d", "--rm",
 		"-e", "TRANSPORT_MODE=http",
 		"-e", "TRANSPORT_HOST=0.0.0.0",
+		"-e", "MCP_AUTH_SECRET="+authSecret,
 		"-e", "MCP_SESSION_MODE=stateful",
 		"-e", "MCP_RATE_LIMIT_GLOBAL=50:100",
 		"-e", fmt.Sprintf("MCP_CORS_MODE=%s", mode),
@@ -131,15 +160,7 @@ func waitForCORSServer(t *testing.T, baseURL string) {
 }
 
 // runCORSTests executes the CORS test cases for a specific configuration
-func runCORSTests(t *testing.T, mcpURL, mode, configuredOrigins string) {
-	// Parse the configured origins
-	allowedOrigins := []string{}
-	if configuredOrigins != "" {
-		for _, origin := range strings.Split(configuredOrigins, ",") {
-			allowedOrigins = append(allowedOrigins, strings.TrimSpace(origin))
-		}
-	}
-
+func runCORSTests(t *testing.T, mcpURL, mode, configuredOrigins, accessToken string) {
 	// Define the test case struct type
 	type testCase struct {
 		name              string
@@ -197,11 +218,11 @@ func runCORSTests(t *testing.T, mcpURL, mode, configuredOrigins string) {
 			if tc.method != "OPTIONS" {
 				// Only try to initialize if we expect it to succeed
 				if tc.expectedStatus == 200 {
-					sessionID = initializeMCPSession(t, mcpURL, tc.origin)
+					sessionID = initializeMCPSession(t, mcpURL, tc.origin, accessToken)
 					require.NotEmpty(t, sessionID, "Expected to get a session ID for allowed origin")
 				} else {
 					// For requests we expect to fail, just check the CORS directly
-					testCORSDirectly(t, mcpURL, tc.method, tc.origin, tc.expectedStatus, tc.expectCORSHeaders)
+					testCORSDirectly(t, mcpURL, tc.method, tc.origin, accessToken, tc.expectedStatus, tc.expectCORSHeaders)
 					return
 				}
 			}
@@ -225,6 +246,7 @@ func runCORSTests(t *testing.T, mcpURL, mode, configuredOrigins string) {
 
 			req, _ := http.NewRequest(tc.method, mcpURL, bytes.NewBuffer(body))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+accessToken)
 
 			if tc.origin != "" {
 				req.Header.Set("Origin", tc.origin)
@@ -258,9 +280,10 @@ func runCORSTests(t *testing.T, mcpURL, mode, configuredOrigins string) {
 }
 
 // testCORSDirectly tests CORS behavior directly without trying to establish a session
-func testCORSDirectly(t *testing.T, mcpURL, method, origin string, expectedStatus int, expectCORSHeaders bool) {
+func testCORSDirectly(t *testing.T, mcpURL, method, origin, accessToken string, expectedStatus int, expectCORSHeaders bool) {
 	client := &http.Client{}
 	req, _ := http.NewRequest(method, mcpURL, nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	if origin != "" {
 		req.Header.Set("Origin", origin)
@@ -286,7 +309,7 @@ func testCORSDirectly(t *testing.T, mcpURL, method, origin string, expectedStatu
 }
 
 // initializeMCPSession initializes an MCP session and returns the session ID
-func initializeMCPSession(t *testing.T, mcpURL, origin string) string {
+func initializeMCPSession(t *testing.T, mcpURL, origin, accessToken string) string {
 	// Create the initialization payload
 	initReq := InitializeRequest{
 		Jsonrpc: "2.0",
@@ -314,6 +337,7 @@ func initializeMCPSession(t *testing.T, mcpURL, origin string) string {
 	require.NoError(t, err)
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}

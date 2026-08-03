@@ -1,0 +1,77 @@
+####
+#### Vault MCP Server — StreamableHTTP transport with optional browser OAuth.
+####
+#### Quickstart (token bypass, no browser OAuth):
+####   export VAULT_ADDR=https://vault.company.com
+####   export VAULT_TOKEN=hvs....          # from `vault login`
+####   docker compose up --build
+####
+#### Browser OAuth (MCP server acts as its own OAuth Authorization Server):
+####   # MCP_AUTH_SECRET is optional; if unset the server generates one and logs it at INFO.
+####   # export MCP_AUTH_SECRET=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')
+####   docker compose up --build
+####   # MCP clients discover /.well-known/* and are directed to /vault/login to
+####   # authenticate (LDAP / userpass / OIDC SSO) against VAULT_ADDR.
+####   # OIDC SSO uses http://localhost:8250/oidc/callback — the Vault CLI's
+####   # pre-registered redirect URI — so no Vault admin changes are needed.
+####
+services:
+  vault-mcp-server:
+    image: marcellodesales/vault-mcp-server
+    build:
+      context: .
+      target: dev
+
+    # The `dev` image defaults to `stdio`; run the StreamableHTTP transport on 8250.
+    command: ["./vault-mcp-server", "streamable-http", "--transport-host", "0.0.0.0", "--transport-port", "8250"]
+    ports:
+      - "8250:8250"
+
+    restart: unless-stopped
+
+    volumes:
+      # Optional: mount a private CA bundle into the container (and set VAULT_CACERT to trust it).
+      - ./data/certs:/company/certs:ro
+
+    environment:
+      # --- Transport ---
+      TRANSPORT_MODE: streamable-http
+      TRANSPORT_HOST: 0.0.0.0
+      TRANSPORT_PORT: "8250"
+      MCP_ENDPOINT: ${MCP_ENDPOINT:-/mcp}
+
+      # Public URL advertised in OAuth metadata and redirects. Override when fronted
+      # by a reverse proxy / public hostname.
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://localhost:8250}
+
+      # --- OAuth (browser login). Optional. If unset the server generates one and logs it. ---
+      # 32 random bytes, base64url (no padding). Generate with:
+      #   openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+      MCP_AUTH_SECRET: ${MCP_AUTH_SECRET:-}
+
+      # --- Upstream Vault ---
+      VAULT_ADDR: ${VAULT_ADDR:-https://vault.company.com}
+      VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+
+      # Token bypass: set VAULT_TOKEN (e.g. via .env) to skip browser OAuth.
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+
+      # --- TLS trust (private CA) ---
+      # If a CA bundle path is configured, the server expects it to exist on disk at startup.
+      VAULT_CACERT: ${VAULT_CACERT:-}
+      VIASAT_IO_CACERT_FILE: ${VIASAT_IO_CACERT_FILE:-}
+
+      # --- Vault auth methods used by the login page ---
+      VAULT_AUTH_LDAP_MOUNT: ${VAULT_AUTH_LDAP_MOUNT:-ldap}
+      VAULT_AUTH_USERPASS_MOUNT: ${VAULT_AUTH_USERPASS_MOUNT:-userpass}
+      VAULT_OIDC_MOUNT: ${VAULT_OIDC_MOUNT:-oidc}
+      VAULT_OIDC_ROLE: ${VAULT_OIDC_ROLE:-}
+      # OIDC callback is handled by this server at /oidc/callback (port 8250 matches
+      # Vault's pre-registered redirect URI — no second listener needed).
+      VAULT_OIDC_CALLBACK_PORT: "0"
+
+      # --- CORS (StreamableHTTP). development allows localhost origins. ---
+      MCP_CORS_MODE: ${MCP_CORS_MODE:-development}
+
+      # --- Logging ---
+      LOG_LEVEL: ${LOG_LEVEL:-info}

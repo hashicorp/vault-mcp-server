@@ -9,6 +9,8 @@ import (
 	"io"
 	stdlog "log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
@@ -42,9 +44,24 @@ func initConfig() {
 
 func initLogger(outPath string) (*log.Logger, error) {
 	logger := log.New()
-	logger.SetLevel(log.DebugLevel)
+
+	// JSON format + stdout so `docker compose logs` shows structured output
+	// matching the other Viasat MCP tools (delinea, codedx, tenable, etc.).
+	logger.SetFormatter(&log.JSONFormatter{
+		TimestampFormat: time.RFC3339Nano,
+	})
+
+	// Default INFO; honour LOG_LEVEL env var (debug / info / warn / error).
+	level := log.InfoLevel
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))); v != "" {
+		if parsed, err := log.ParseLevel(v); err == nil {
+			level = parsed
+		}
+	}
+	logger.SetLevel(level)
 
 	if outPath == "" {
+		logger.SetOutput(os.Stdout)
 		return logger, nil
 	}
 

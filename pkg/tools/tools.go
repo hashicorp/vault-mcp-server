@@ -30,6 +30,9 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	readSecretTool := kv.ReadSecret(logger)
 	hcServer.AddTool(readSecretTool.Tool, readSecretTool.Handler)
 
+	readFolderTool := kv.ReadFolder(logger)
+	hcServer.AddTool(readFolderTool.Tool, readFolderTool.Handler)
+
 	writeSecretTool := kv.WriteSecret(logger)
 	hcServer.AddTool(writeSecretTool.Tool, writeSecretTool.Handler)
 

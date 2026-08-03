@@ -71,37 +71,36 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
 
-	// Construct the full path for listing
-	fullPath := fmt.Sprintf(mount+"/%s", path)
+	trimmedPath := strings.TrimPrefix(path, "/")
 
-	mounts, err := vault.Sys().ListMounts()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to list mounts: %v", err)), nil
+	// KV v1 LIST uses: <mount>/<path>
+	fullPathV1 := fmt.Sprintf("%s/%s", mount, trimmedPath)
+
+	// KV v2 LIST uses: <mount>/metadata/<path>
+	fullPathV2 := fmt.Sprintf("%s/metadata/%s", mount, trimmedPath)
+	if trimmedPath == "" {
+		fullPathV2 = fmt.Sprintf("%s/metadata/", mount)
 	}
 
-	// Check if the mount exists
-	if m, ok := mounts[mount+"/"]; ok {
-		// is it a KV v2 mount?
-		if m.Options["version"] == "2" {
-			if path == "" {
-				fullPath = fmt.Sprintf("%s/metadata/", mount)
-			} else {
-				fullPath = fmt.Sprintf("%s/metadata/%s", mount, strings.TrimPrefix(path, "/"))
-			}
-		}
-	} else {
-		return mcp.NewToolResultError(fmt.Sprintf("mount path '%s' does not exist. Use 'create_mount' with the type kv2 to create the mount.", mount)), nil
-	}
-
-	// List secrets
-	secret, err := vault.Logical().List(fullPath)
-	if err != nil {
-		logger.WithError(err).WithFields(log.Fields{
+	// List secrets (prefer KV v1 path; fall back to KV v2).
+	secret, errV1 := vault.Logical().List(fullPathV1)
+	if errV1 != nil || secret == nil {
+		logger.WithError(errV1).WithFields(log.Fields{
 			"mount":     mount,
 			"path":      path,
-			"full_path": fullPath,
-		}).Error("Failed to list secrets")
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to list secrets: %v", err)), nil
+			"full_path": fullPathV1,
+		}).Debug("KV v1 list did not return a secret; retrying as KV v2")
+
+		secret, err = vault.Logical().List(fullPathV2)
+		if err != nil {
+			logger.WithError(err).WithFields(log.Fields{
+				"mount":        mount,
+				"path":         path,
+				"full_path_v1": fullPathV1,
+				"full_path_v2": fullPathV2,
+			}).Error("Failed to list secrets")
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list secrets (KV v1 path %q: %v; KV v2 path %q: %v)", fullPathV1, errV1, fullPathV2, err)), nil
+		}
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -112,22 +111,23 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		return mcp.NewToolResultText("[]"), nil
 	}
 
-	// Extract keys from the response
-	keys, ok := secret.Data["keys"].([]interface{})
-	if !ok {
+	// Extract keys from the response (Vault may decode into []interface{} or []string)
+	var secretNames []string
+	switch keys := secret.Data["keys"].(type) {
+	case []interface{}:
+		for _, key := range keys {
+			if keyStr, ok := key.(string); ok {
+				secretNames = append(secretNames, keyStr)
+			}
+		}
+	case []string:
+		secretNames = append(secretNames, keys...)
+	default:
 		logger.WithFields(log.Fields{
 			"mount": mount,
 			"path":  path,
 		}).Debug("No keys found in response")
 		return mcp.NewToolResultText("[]"), nil
-	}
-
-	// Convert to string slice
-	var secretNames []string
-	for _, key := range keys {
-		if keyStr, ok := key.(string); ok {
-			secretNames = append(secretNames, keyStr)
-		}
 	}
 
 	// Marshal to JSON

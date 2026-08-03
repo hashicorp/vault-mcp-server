@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	stdlog "log"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/oauth"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
 	"github.com/hashicorp/vault-mcp-server/version"
@@ -139,35 +142,78 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		opts = append(opts, server.WithTLSCert(tlsConfig.CertFile, tlsConfig.KeyFile))
 	}
 
-	// Log the endpoint path being used
-	logger.Infof("Using endpoint path: %s", endpointPath)
-
-	// Create StreamableHTTP server which implements the new streamable-http transport
-	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
 	baseStreamableServer := server.NewStreamableHTTPServer(hcServer, opts...)
 
 	// Load CORS configuration
 	corsConfig := client.LoadCORSConfigFromEnv()
 
-	// Log CORS configuration
-	logger.Infof("CORS Mode: %s", corsConfig.Mode)
-	if len(corsConfig.AllowedOrigins) > 0 {
-		logger.Infof("Allowed Origins: %s", strings.Join(corsConfig.AllowedOrigins, ", "))
-	} else if corsConfig.Mode == "strict" {
-		logger.Warnf("No allowed origins configured in strict mode. All cross-origin requests will be rejected.")
-	} else if corsConfig.Mode == "development" {
-		logger.Infof("Development mode: localhost origins are automatically allowed")
-	} else if corsConfig.Mode == "disabled" {
-		logger.Warnf("CORS validation is disabled. This is not recommended for production.")
-	}
-
-	// Create a security wrapper around the streamable server
-	streamableServer := client.NewSecurityHandler(baseStreamableServer, corsConfig.AllowedOrigins, corsConfig.Mode, logger)
+	var streamableServer http.Handler = baseStreamableServer
 
 	mux := http.NewServeMux()
 
-	// Apply middleware
+	// StreamableHTTP supports browser-based OAuth (OIDC / LDAP / userpass) to obtain
+	// an upstream Vault token. MCP_AUTH_SECRET is optional: when unset, a random
+	// secret is generated at startup and logged at INFO level.
+	var bearer func(http.Handler) http.Handler
+	oauthCfg := oauth.LoadConfigFromEnv()
+	if !oauthCfg.Enabled() {
+		secret, err := generateMCPAuthSecret()
+		if err != nil {
+			return fmt.Errorf("generate MCP_AUTH_SECRET: %w", err)
+		}
+		oauthCfg.MCPAuthSecret = secret
+		logger.WithFields(log.Fields{
+			"mcp_auth_secret": secret,
+			"hint":            "set MCP_AUTH_SECRET to persist bearer tokens across restarts",
+		}).Info("generated MCP_AUTH_SECRET")
+	}
+
+	// Require the configured private CA bundle to be present on disk before booting.
+	// Bootstrap (download) should be performed out-of-process (e.g. docker-compose-viasat.yaml's
+	// certs-puller or scripts/fetch-secrets).
+	if err := requireConfiguredCACert(logger); err != nil {
+		return err
+	}
+
+	if err := oauthCfg.Validate(); err != nil {
+		return fmt.Errorf("OAuth configuration error: %w", err)
+	}
+	oauthRouter, err := oauth.NewRouter(oauthCfg, logger)
+	if err != nil {
+		return fmt.Errorf("OAuth init error: %w", err)
+	}
+	oauthRouter.Register(mux)
+	bearer = oauthRouter.BearerMiddleware
+
+	if oauthCfg.OIDCCallbackPort > 0 {
+		callbackServer := &http.Server{
+			Addr:              fmt.Sprintf(":%d", oauthCfg.OIDCCallbackPort),
+			Handler:           oauthRouter.OIDCCallbackMux(),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      30 * time.Second,
+		}
+		go func() {
+			if err := callbackServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.WithError(err).Warn("OIDC callback server error")
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = callbackServer.Shutdown(shutdownCtx)
+		}()
+	}
+
+	// Apply middleware (innermost first).
+	// - bearer: validates OAuth bearer tokens (or allows VAULT_TOKEN from env/header)
+	// - VaultContext: picks up Vault settings from request/env (bearer wins when present)
+	// - security handler: enforces CORS and handles OPTIONS preflight
+	// - logging: outermost request logging
+	streamableServer = bearer(streamableServer)
 	streamableServer = client.VaultContextMiddleware(logger)(streamableServer)
+	streamableServer = client.NewSecurityHandler(streamableServer, corsConfig.AllowedOrigins, corsConfig.Mode, logger)
 	streamableServer = client.LoggingMiddleware(logger)(streamableServer)
 
 	// Handle the /mcp endpoint with the streamable server (with security wrapper)
@@ -196,18 +242,59 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 
 	if tlsConfig != nil {
 		httpServer.TLSConfig = tlsConfig.Config
-		logger.Infof("TLS enabled with certificate: %s", tlsConfig.CertFile)
-	} else {
-		if !client.IsLocalHost(host) {
-			return fmt.Errorf("TLS is required for non-localhost binding (%s). Set MCP_TLS_CERT_FILE and MCP_TLS_KEY_FILE environment variables", host)
-		}
-		logger.Warnf("TLS is disabled on StreamableHTTP server; this is not recommended for production")
+	} else if !client.IsLocalHost(host) {
+		return fmt.Errorf("TLS is required for non-localhost binding (%s). Set MCP_TLS_CERT_FILE and MCP_TLS_KEY_FILE environment variables", host)
 	}
+
+	// ── Bootstrap summary ────────────────────────────────────────────────────
+	// Print a single structured block before starting, mirroring the pattern
+	// used by the other Viasat MCP tools (delinea, blackduck, tenable, etc.).
+	{
+		vaultAddr := oauthCfg.VaultAddr
+		if vaultAddr == "" {
+			vaultAddr = client.DefaultVaultAddress
+		}
+
+		tlsMode := "disabled (not recommended for production)"
+		if tlsConfig != nil {
+			tlsMode = "enabled (" + tlsConfig.CertFile + ")"
+		}
+
+		corsOrigins := strings.Join(corsConfig.AllowedOrigins, ", ")
+		if corsOrigins == "" {
+			corsOrigins = "(none)"
+		}
+
+		logger.WithFields(log.Fields{
+			"addr":      addr,
+			"endpoint":  endpointPath,
+			"tls":       tlsMode,
+			"cors_mode": corsConfig.Mode,
+		}).Info("http server starting")
+
+		logger.WithFields(log.Fields{
+			"vault_addr":      vaultAddr,
+			"vault_namespace": oauthCfg.VaultNamespace,
+			"cacert_file":     client.EffectiveCACertFile(),
+		}).Info("vault connection")
+
+		oidcCallback := oauthCfg.OIDCCallbackURL(fmt.Sprintf("http://%s", addr))
+		logger.WithFields(log.Fields{
+			"login_page":       fmt.Sprintf("http://%s/vault/login", addr),
+			"login_methods":    "ldap, userpass, oidc",
+			"ldap_mount":       oauthCfg.LDAPMount,
+			"userpass_mount":   oauthCfg.UserpassMount,
+			"oidc_mount":       oauthCfg.OIDCMount,
+			"oidc_role":        oauthCfg.OIDCRole,
+			"oidc_callback":    oidcCallback,
+			"access_token_ttl": oauthCfg.AccessTokenTTL.String(),
+		}).Info("oauth enabled")
+	}
+	// ── End bootstrap summary ─────────────────────────────────────────────────
 
 	// Start server in goroutine
 	errC := make(chan error, 1)
 	go func() {
-		logger.Infof("Starting StreamableHTTP server on %s%s", addr, endpointPath)
 		errC <- httpServer.ListenAndServe()
 	}()
 
@@ -354,4 +441,41 @@ func getEndpointPath(cmd *cobra.Command) string {
 	}
 
 	return DefaultEndPointPath
+}
+
+func generateMCPAuthSecret() (string, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(key), nil
+}
+
+func requireConfiguredCACert(logger *log.Logger) error {
+	candidates := make([]string, 0, 2)
+	for _, key := range []string{client.VaultCACert, client.VIASATIOCACertFile} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			candidates = append(candidates, v)
+		}
+	}
+
+	// No explicit CA bundle configured; rely on the system trust store.
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	for _, p := range candidates {
+		info, err := os.Stat(p)
+		if err == nil && !info.IsDir() && info.Size() > 0 {
+			if logger != nil {
+				logger.WithFields(log.Fields{
+					"path":       p,
+					"size_bytes": info.Size(),
+				}).Info("private ca root ready")
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("private ca root missing: expected one of %v to exist; bootstrap it (e.g. scripts/fetch-secrets) or mount it into the container", candidates)
 }

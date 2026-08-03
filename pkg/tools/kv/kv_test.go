@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
@@ -85,4 +86,94 @@ func getResultText(result *mcp.CallToolResult) string {
 		return ""
 	}
 	return tc.Text
+}
+
+func TestListSecretsHandler_KVV1(t *testing.T) {
+	logger := newLogger()
+	var calledV2 atomic.Bool
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/secrets/app", "/v1/secrets/app/":
+			jsonResponse(w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"keys": []string{"foo", "bar/"},
+				},
+			})
+		case "/v1/secrets/metadata/app", "/v1/secrets/metadata/app/":
+			calledV2.Store(true)
+			w.WriteHeader(http.StatusInternalServerError)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"unexpected v2 fallback"}})
+		case "/v1/sys/mounts":
+			w.WriteHeader(http.StatusInternalServerError)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"unexpected sys/mounts call"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"not found"}})
+		}
+	})
+
+	ctx, cleanup := newTestContext(t, h)
+	defer cleanup()
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "list_secrets",
+			Arguments: map[string]interface{}{
+				"mount": "secrets",
+				"path":  "app",
+			},
+		},
+	}
+
+	result, err := listSecretsHandler(ctx, req, logger)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.IsError, getResultText(result))
+	require.JSONEq(t, `["foo","bar/"]`, getResultText(result))
+	require.False(t, calledV2.Load())
+}
+
+func TestListSecretsHandler_FallsBackToKVV2(t *testing.T) {
+	logger := newLogger()
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/secrets/", "/v1/secrets":
+			w.WriteHeader(http.StatusNotFound)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"unsupported path"}})
+		case "/v1/secrets/metadata/", "/v1/secrets/metadata":
+			jsonResponse(w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"keys": []string{"alpha", "bravo/"},
+				},
+			})
+		case "/v1/sys/mounts":
+			// Simulate restricted Vault tokens that cannot read sys/mounts.
+			w.WriteHeader(http.StatusForbidden)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"permission denied"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			jsonResponse(w, map[string]interface{}{"errors": []string{"not found"}})
+		}
+	})
+
+	ctx, cleanup := newTestContext(t, h)
+	defer cleanup()
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "list_secrets",
+			Arguments: map[string]interface{}{
+				"mount": "secrets",
+				"path":  "",
+			},
+		},
+	}
+
+	result, err := listSecretsHandler(ctx, req, logger)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.IsError, getResultText(result))
+	require.JSONEq(t, `["alpha","bravo/"]`, getResultText(result))
 }
