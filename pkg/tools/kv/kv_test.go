@@ -35,7 +35,8 @@ func newTestContext(t *testing.T, handler http.Handler) (context.Context, func()
 	mockVault := httptest.NewServer(handler)
 
 	sessionID := "test-" + t.Name()
-	_, err := client.NewVaultClient(sessionID, mockVault.URL, false, "test-token", "")
+	token := "test-token"
+	_, err := client.NewVaultClient(sessionID, mockVault.URL, false, token, "")
 	require.NoError(t, err)
 
 	mcpSrv := server.NewMCPServer("test", "1.0")
@@ -43,6 +44,9 @@ func newTestContext(t *testing.T, handler http.Handler) (context.Context, func()
 		id:      sessionID,
 		notifCh: make(chan mcp.JSONRPCNotification, 10),
 	})
+	
+	// Add the Vault token to the context so handlers can retrieve it
+	ctx = client.WithVaultToken(ctx, token)
 
 	return ctx, func() {
 		mockVault.Close()

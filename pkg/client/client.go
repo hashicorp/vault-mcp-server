@@ -5,6 +5,8 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -17,9 +19,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// sessionEntry caches a Vault client with its token hash. Requires both
+// session ID and matching token to prevent session hijacking via leaked IDs.
+type sessionEntry struct {
+	client    *api.Client
+	tokenHash [32]byte
+}
+
 var (
-	activeClients sync.Map
+	activeClients sync.Map // sessionId -> *sessionEntry
 )
+
+func hashToken(token string) [32]byte {
+	return sha256.Sum256([]byte(token))
+}
 
 const (
 	VaultAddress         = "VAULT_ADDR"
@@ -65,15 +78,23 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 		client.SetNamespace(vaultNamespace)
 	}
 
-	activeClients.Store(sessionId, client)
+	activeClients.Store(sessionId, &sessionEntry{client: client, tokenHash: hashToken(vaultToken)})
 
 	return client, nil
 }
 
 // GetVaultClient retrieves the Vault client for the given session
 func GetVaultClient(sessionId string) *api.Client {
+	if entry := getSessionEntry(sessionId); entry != nil {
+		return entry.client
+	}
+	return nil
+}
+
+// getSessionEntry retrieves the cached client and token hash for verification.
+func getSessionEntry(sessionId string) *sessionEntry {
 	if value, ok := activeClients.Load(sessionId); ok {
-		return value.(*api.Client)
+		return value.(*sessionEntry)
 	}
 	return nil
 }
@@ -83,7 +104,9 @@ func DeleteVaultClient(sessionId string) {
 	activeClients.Delete(sessionId)
 }
 
-// GetVaultClientFromContext extracts Vault client from the MCP context
+// GetVaultClientFromContext extracts Vault client from the MCP context.
+// Validates that the current request's token matches the cached token hash
+// to prevent session hijacking via leaked or guessed session IDs.
 func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Client, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
@@ -93,15 +116,42 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 	// Log the session ID for debugging
 	logger.WithField("session_id", session.SessionID()).Debug("Retrieving Vault client for session")
 
-	// Try to get existing client
-	client := GetVaultClient(session.SessionID())
-	if client != nil {
-		return client, nil
+	requestToken := resolveVaultToken(ctx)
+
+	if entry := getSessionEntry(session.SessionID()); entry != nil {
+		if requestToken == "" {
+			return nil, fmt.Errorf("vault token required for this request")
+		}
+
+		currentHash := hashToken(requestToken)
+		if subtle.ConstantTimeCompare(entry.tokenHash[:], currentHash[:]) == 1 {
+			return entry.client, nil
+		}
+
+		// Token mismatch: rebuild client with current token instead of
+		// reusing cached client. Vault will reject invalid tokens.
+		logger.WithField("session_id", session.SessionID()).Info("Vault token for session changed; rebuilding client")
+		return CreateVaultClientForSession(ctx, session, logger)
 	}
 
 	logger.WithField("session_id", session.SessionID()).Warn("Vault client not found, creating a new one")
 
 	return CreateVaultClientForSession(ctx, session, logger)
+}
+
+// resolveVaultToken resolves the Vault token from request context
+// (X-Vault-Token header/query param) or VAULT_TOKEN env var as fallback.
+func resolveVaultToken(ctx context.Context) string {
+	if v, ok := ctx.Value(contextKey(VaultToken)).(string); ok && v != "" {
+		return v
+	}
+	return getEnv(VaultToken, "")
+}
+
+// WithVaultToken returns a context with the given Vault token, using the
+// same key as VaultContextMiddleware. Useful for tests and non-HTTP callers.
+func WithVaultToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, contextKey(VaultToken), token)
 }
 
 func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
@@ -112,13 +162,9 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
-	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
-	if !ok || vaultToken == "" {
-		vaultToken = getEnv(VaultToken, "")
-		if vaultToken == "" {
-			//logger.Warn("Vault token not provided for session")
-			return nil, fmt.Errorf("vault token not provided for session")
-		}
+	vaultToken := resolveVaultToken(ctx)
+	if vaultToken == "" {
+		return nil, fmt.Errorf("vault token not provided for session")
 	}
 
 	vaultNamespace, ok := ctx.Value(contextKey(VaultNamespace)).(string)
