@@ -5,10 +5,12 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/textproto"
 	"os"
+	"strconv"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -130,7 +132,12 @@ func (h *securityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requiredHeaders := []string{VaultAddress, VaultToken, VaultHeaderToken, VaultSkipTLSVerify}
+			requiredHeaders := []string{VaultAddress, VaultSkipTLSVerify}
+			if !jwtAuthEnabled() {
+				// In JWT mode the token comes from the JWT exchange below,
+				// not from a static VAULT_TOKEN / X-Vault-Token value.
+				requiredHeaders = append(requiredHeaders, VaultToken, VaultHeaderToken)
+			}
 			ctx := r.Context()
 
 			for _, header := range requiredHeaders {
@@ -184,10 +191,55 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 				logger.Debug("Vault namespace configured via request context")
 			}
 
+			if jwtAuthEnabled() {
+				rawHeader := r.Header.Get(textproto.CanonicalMIMEHeaderKey(jwtAuthHeaderName()))
+				jwt, err := extractBearerToken(rawHeader)
+				if err != nil {
+					writeJWTAuthError(w, logger, r.RemoteAddr, err)
+					return
+				}
+
+				vaultAddress, _ := ctx.Value(contextKey(VaultAddress)).(string)
+				if vaultAddress == "" {
+					vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
+				}
+				vaultNamespace, _ := ctx.Value(contextKey(VaultNamespace)).(string)
+				var vaultSkipTLSVerify bool
+				if skipStr, ok := ctx.Value(contextKey(VaultSkipTLSVerify)).(string); ok {
+					vaultSkipTLSVerify, _ = strconv.ParseBool(skipStr)
+				}
+
+				vaultToken, err := resolveJWTVaultToken(vaultAddress, vaultNamespace, vaultSkipTLSVerify, jwt, logger)
+				if err != nil {
+					writeJWTAuthError(w, logger, r.RemoteAddr, err)
+					return
+				}
+
+				ctx = context.WithValue(ctx, contextKey(VaultToken), vaultToken)
+			}
+
 			// Call the next handler with the enriched context
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// writeJWTAuthError writes the HTTP status and message for a failed JWT
+// exchange. Errors that aren't a *jwtLoginError, such as failing to build
+// the login client, fall back to 401 so a JWT auth failure never falls
+// through to the static-token path.
+func writeJWTAuthError(w http.ResponseWriter, logger *log.Logger, remoteAddr string, err error) {
+	var loginErr *jwtLoginError
+	status := http.StatusUnauthorized
+	message := err.Error()
+	if errors.As(err, &loginErr) {
+		status = loginErr.StatusCode()
+		message = loginErr.Error()
+	}
+	if logger != nil {
+		logger.WithField("remote_addr", remoteAddr).Warn("Vault JWT authentication failed: " + message)
+	}
+	http.Error(w, message, status)
 }
 
 // LoggingMiddleware logs HTTP requests with structured logging

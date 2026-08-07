@@ -490,6 +490,136 @@ func TestVaultContextMiddleware_SecurityLogging(t *testing.T) {
 	})
 }
 
+// TestVaultContextMiddleware_JWTMode tests the middleware's behavior when
+// VAULT_AUTH_METHOD=jwt is configured: it should exchange the incoming JWT
+// for a Vault token instead of reading VAULT_TOKEN / X-Vault-Token.
+func TestVaultContextMiddleware_JWTMode(t *testing.T) {
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	setJWTMode := func(t *testing.T, extra map[string]string) {
+		t.Helper()
+		os.Setenv(VaultAuthMethod, "jwt")
+		t.Cleanup(func() { os.Unsetenv(VaultAuthMethod) })
+		for k, v := range extra {
+			os.Setenv(k, v)
+			t.Cleanup(func() { os.Unsetenv(k) })
+		}
+	}
+
+	t.Run("exchanges the bearer JWT for a vault token", func(t *testing.T) {
+		resetJWTCache()
+		vaultServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"auth":{"client_token":"s.exchanged-token","lease_duration":3600}}`))
+		}))
+		defer vaultServer.Close()
+
+		setJWTMode(t, map[string]string{
+			VaultAddress:     vaultServer.URL,
+			VaultAuthJWTRole: "my-role",
+		})
+
+		var gotToken string
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token, _ := r.Context().Value(contextKey(VaultToken)).(string)
+			gotToken = token
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := VaultContextMiddleware(logger)(testHandler)
+
+		req := httptest.NewRequest("GET", "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer user.jwt.token")
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "s.exchanged-token", gotToken)
+	})
+
+	t.Run("missing JWT header is rejected with 401", func(t *testing.T) {
+		resetJWTCache()
+		setJWTMode(t, map[string]string{VaultAuthJWTRole: "my-role"})
+
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := VaultContextMiddleware(logger)(testHandler)
+
+		req := httptest.NewRequest("GET", "/mcp", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	})
+
+	t.Run("vault login failure is surfaced, not silently ignored", func(t *testing.T) {
+		resetJWTCache()
+		vaultServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"errors":["permission denied"]}`))
+		}))
+		defer vaultServer.Close()
+
+		setJWTMode(t, map[string]string{
+			VaultAddress:     vaultServer.URL,
+			VaultAuthJWTRole: "my-role",
+		})
+
+		called := false
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := VaultContextMiddleware(logger)(testHandler)
+
+		req := httptest.NewRequest("GET", "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer rejected.jwt.token")
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.False(t, called, "the next handler must not run when the JWT exchange fails")
+		assert.Contains(t, rr.Body.String(), "permission denied")
+	})
+
+	t.Run("static VAULT_TOKEN header is ignored in jwt mode", func(t *testing.T) {
+		resetJWTCache()
+		vaultServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"auth":{"client_token":"s.jwt-token","lease_duration":3600}}`))
+		}))
+		defer vaultServer.Close()
+
+		setJWTMode(t, map[string]string{
+			VaultAddress:     vaultServer.URL,
+			VaultAuthJWTRole: "my-role",
+		})
+
+		var gotToken string
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token, _ := r.Context().Value(contextKey(VaultToken)).(string)
+			gotToken = token
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := VaultContextMiddleware(logger)(testHandler)
+
+		req := httptest.NewRequest("GET", "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer user.jwt.token")
+		req.Header.Set(VaultToken, "should-be-ignored")
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "s.jwt-token", gotToken)
+	})
+}
+
 // TestVaultContextMiddleware_EdgeCases tests edge cases and error conditions
 func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 	logger := log.New()
