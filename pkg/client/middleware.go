@@ -152,6 +152,13 @@ func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 						http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the X-Vault-Token header", http.StatusBadRequest)
 						return
 					}
+	
+					// Explicitly disallow VAULT_ADDR in query parameters to prevent SSRF and token theft
+					if header == VaultAddress && headerValue != "" {
+						logger.Info(fmt.Sprintf("Vault address was provided in query parameters by client %v, terminating request", r.RemoteAddr))
+						http.Error(w, "Vault address should not be provided in query parameters for security reasons, use the VAULT_ADDR header", http.StatusBadRequest)
+						return
+					}
 				}
 
 				// If not found in query parameters, check environment variables

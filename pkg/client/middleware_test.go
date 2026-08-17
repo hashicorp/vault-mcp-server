@@ -549,6 +549,25 @@ func TestVaultContextMiddleware_EdgeCases(t *testing.T) {
 		assert.Contains(t, rr.Body.String(), "Vault token should not be provided in query parameters")
 	})
 
+	t.Run("vault address in query parameters is rejected for security", func(t *testing.T) {
+		mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := VaultContextMiddleware(logger)
+		handler := middleware(mockHandler)
+
+		// Create request with VAULT_ADDR in query parameters (should be rejected)
+		req := httptest.NewRequest("GET", "/mcp?VAULT_ADDR=http://attacker.com:8200", nil)
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		// Should return 400 Bad Request for security reasons
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "Vault address should not be provided in query parameters")
+	})
+
 	t.Run("very long header values are handled", func(t *testing.T) {
 		mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
