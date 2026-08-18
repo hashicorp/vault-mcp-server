@@ -116,12 +116,6 @@ The HTTP server includes a comprehensive middleware stack:
             },
             {
                 "type": "promptString",
-                "id": "vault_addr",
-                "description": "Vault Address (e.g. http://127.0.0.1:8200)",
-                "password": false
-            },
-            {
-                "type": "promptString",
                 "id": "vault_namespace",
                 "description": "Vault Namespace (optional)",
                 "password": false
@@ -129,9 +123,8 @@ The HTTP server includes a comprehensive middleware stack:
             ],
             "servers": {
                 "vault-mcp-server": {
-                    "url": "http://localhost:8080/mcp",
+                    "url": "http://localhost:8080/mcp?VAULT_ADDR=http://127.0.0.1:8200",
                     "headers": {
-                        "VAULT_ADDR": "${input:vault_addr}",
                         "X-Vault-Token": "${input:vault_token}",
                         "X-Vault-Namespace": "${input:vault_namespace}"
                     }
