@@ -87,7 +87,7 @@ In HTTP mode, Vault configuration can be provided through multiple methods (in o
 - **HTTP Headers**: `VAULT_ADDR`, `X-Vault-Token`, and `X-Vault-Namespace`
 - **Environment Variables**: Standard `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_NAMESPACE` env vars
 
-> **Note:** `VAULT_ADDR` must not be supplied as a URL query parameter. Use the `VAULT_ADDR` HTTP header instead.
+> **Note:**  Do not supply `VAULT_ADDR` as a URL query parameter. Use the `VAULT_ADDR` HTTP header instead.
 
 ### Middleware Stack
 
