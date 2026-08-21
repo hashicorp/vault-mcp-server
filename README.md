@@ -79,6 +79,11 @@ The server can be configured using environment variables:
 - `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
 - `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
+- `VAULT_AUTH_METHOD`: `token` (default) or `jwt`. See [JWT Auth Mode](#jwt-auth-mode-gateway-deployments) below.
+- `VAULT_AUTH_JWT_PATH`: Mount path of Vault's JWT auth method (default: `jwt`)
+- `VAULT_AUTH_JWT_ROLE`: Vault role to authenticate against (required when `VAULT_AUTH_METHOD=jwt`)
+- `VAULT_AUTH_JWT_HEADER`: Header the incoming JWT is read from (default: `Authorization`, expects a `Bearer <jwt>` value)
+- `VAULT_AUTH_JWT_CACHE_TTL`: Optional cap, in seconds, on how long an exchanged Vault token is cached (default: the token's own lease duration)
 
 ## HTTP Mode Configuration
 
@@ -96,6 +101,27 @@ The HTTP server includes a comprehensive middleware stack:
 - **CORS Middleware**: Enables cross-origin requests with appropriate headers
 - **Vault Context Middleware**: Extracts Vault configuration and adds to request context
 - **Logging Middleware**: Structured HTTP request logging
+
+### JWT auth mode (gateway deployments)
+
+By default the server authenticates to Vault with a static token (`VAULT_TOKEN` or `X-Vault-Token`). Every request then reaches Vault as the same identity, which doesn't work well behind a gateway that already knows who the user is.
+
+Set `VAULT_AUTH_METHOD=jwt` to have the server exchange the caller's JWT for a short-lived, user-scoped Vault token on each request instead:
+
+1. A reverse proxy or gateway (e.g. [Toolhive](https://docs.stacklok.com/toolhive)) authenticates the user via OIDC and forwards their token as `Authorization: Bearer <jwt>`.
+2. The server reads that header and calls Vault's `POST /v1/auth/<VAULT_AUTH_JWT_PATH>/login` with the configured `VAULT_AUTH_JWT_ROLE` and the JWT.
+3. Vault verifies the JWT itself (signature, issuer, audience, per the JWT auth method's configuration) and returns a token scoped to whatever policies that role maps to.
+4. The resulting token is used for the rest of the request and cached in memory, keyed by the JWT, until it's close to expiry (or until `VAULT_AUTH_JWT_CACHE_TTL` elapses, if set).
+
+`VAULT_TOKEN` and `X-Vault-Token` are ignored while JWT mode is active. If the JWT is missing or Vault rejects it, the request fails with 401 or 403 rather than falling back to a static token.
+
+```bash
+export VAULT_AUTH_METHOD=jwt
+export VAULT_AUTH_JWT_ROLE=mcp-gateway
+export VAULT_ADDR=https://vault.internal:8200
+```
+
+This assumes Vault's JWT auth method is already enabled and mapped to your identity provider; see [Vault's JWT auth docs](https://developer.hashicorp.com/vault/docs/auth/jwt) for that side of the setup.
 
 ## Integration with Visual Studio Code
 
