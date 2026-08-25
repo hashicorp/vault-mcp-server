@@ -44,6 +44,12 @@ type AuthConfig struct {
 	// Corresponds to VAULT_MCP_STS_CLIENT_SECRET.
 	STSClientSecret string
 
+	// STSAuthorizationDetails is an optional RFC 9396 RAR JSON array forwarded as
+	// the authorization_details parameter in the STS token-exchange request.
+	// It scopes the issued delegation token to specific Vault paths and capabilities.
+	// Corresponds to VAULT_MCP_STS_AUTHORIZATION_DETAILS.
+	STSAuthorizationDetails string
+
 	// Deadline is the per-PKCE-flow timeout. Defaults to 5 minutes when zero.
 	Deadline time.Duration
 }
@@ -81,7 +87,7 @@ func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (
 		return nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
 	}
 
-	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint, cfg.STSClientID, cfg.STSClientSecret)
+	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint, cfg.STSClientID, cfg.STSClientSecret, cfg.STSAuthorizationDetails)
 	if err != nil {
 		return nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
 	}

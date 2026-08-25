@@ -39,6 +39,39 @@ const (
 // by the session hook (task-011). nil when auth is disabled (VAULT_TOKEN path).
 var activeDelegationJWT *auth.DelegationJWT
 
+const (
+	// delegationJWTEnvVar exposes the raw delegation JWT to the running process
+	// (and any child processes it spawns) so it can be used while starting an
+	// MCP session.
+	delegationJWTEnvVar = "VAULT_MCP_DELEGATION_JWT"
+	// delegationJWTFileEnvVar names the environment variable that points at the
+	// file the delegation JWT was written to.
+	delegationJWTFileEnvVar = "VAULT_MCP_DELEGATION_JWT_FILE"
+	// defaultDelegationJWTFile is used when delegationJWTFileEnvVar is unset.
+	defaultDelegationJWTFile = "vault-mcp-delegation.jwt"
+)
+
+// exportDelegationJWT persists the delegation JWT to a file and exports both// the token and the file path as environment variables so the MCP server can// use them while starting a session. It is a no-op when jwt is nil (auth// disabled / VAULT_TOKEN fallback path).
+func exportDelegationJWT(jwt *auth.DelegationJWT) error {
+	if jwt == nil {
+		return nil
+	}
+	jwtFile := os.Getenv(delegationJWTFileEnvVar)
+	if jwtFile == "" {
+		jwtFile = path.Join(os.TempDir(), defaultDelegationJWTFile)
+	}
+	if err := os.WriteFile(jwtFile, []byte(jwt.Raw), 0o600); err != nil {
+		return fmt.Errorf("failed to write delegation JWT to %s: %w", jwtFile, err)
+	}
+	if err := os.Setenv(delegationJWTEnvVar, jwt.Raw); err != nil {
+		return fmt.Errorf("failed to export %s: %w", delegationJWTEnvVar, err)
+	}
+	if err := os.Setenv(delegationJWTFileEnvVar, jwtFile); err != nil {
+		return fmt.Errorf("failed to export %s: %w", delegationJWTFileEnvVar, err)
+	}
+	return nil
+}
+
 var (
 	rootCmd = &cobra.Command{
 		Use:     "vault-mcp-server",
@@ -120,8 +153,16 @@ You can specify the host, port, and endpoint path to customize where the server 
 func runHTTPServer(logger *log.Logger, host string, port string, endpointPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	hcServer := NewServer(version.Version, logger, nil)
+	cfg := authConfigFromEnv()
+	jwt, err := auth.AcquireTokens(ctx, cfg, auth.RunPKCEFlows)
+	if err != nil {
+		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
+	}
+	activeDelegationJWT = jwt
+	if err := exportDelegationJWT(activeDelegationJWT); err != nil {
+		return fmt.Errorf("failed to export delegation JWT: %w", err)
+	}
+	hcServer := NewServer(version.Version, logger, activeDelegationJWT)
 	tools.InitTools(hcServer, logger)
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
@@ -244,9 +285,10 @@ func authConfigFromEnv() auth.AuthConfig {
 		AuthURL:         os.Getenv("VAULT_MCP_AUTH_URL"),
 		TokenURL:        os.Getenv("VAULT_MCP_TOKEN_URL"),
 		RedirectURL:     os.Getenv("VAULT_MCP_REDIRECT_URL"),
-		STSEndpoint:     os.Getenv("VAULT_MCP_STS_ENDPOINT"),
-		STSClientID:     os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
-		STSClientSecret: os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),
+		STSEndpoint:             os.Getenv("VAULT_MCP_STS_ENDPOINT"),
+		STSClientID:             os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
+		STSClientSecret:         os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),
+		STSAuthorizationDetails: os.Getenv("VAULT_MCP_STS_AUTHORIZATION_DETAILS"),
 	}
 }
 
@@ -263,7 +305,9 @@ func runStdioServer(logger *log.Logger) error {
 		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
 	}
 	activeDelegationJWT = jwt
-
+	if err := exportDelegationJWT(activeDelegationJWT); err != nil {
+		return fmt.Errorf("failed to export delegation JWT: %w", err)
+	}
 	hcServer := NewServer(version.Version, logger, activeDelegationJWT)
 	tools.InitTools(hcServer, logger)
 

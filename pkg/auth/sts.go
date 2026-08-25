@@ -27,20 +27,29 @@ const (
 // JSON response (which is the raw Delegation JWT string), and returns the result of
 // ParseUnsigned — giving the caller a ready-to-use *DelegationJWT.
 //
+// authorizationDetails is an optional RFC 9396 RAR JSON array (e.g.
+// `[{"type":"vault:path_access","path":"secret/data/foo","capabilities":["read"]}]`).
+// When non-empty it is forwarded as the authorization_details POST parameter so the
+// STS scopes the issued delegation token to the requested paths and capabilities.
+//
 // Errors:
 //   - A descriptive error (including HTTP status) when the STS returns a non-2xx response.
 //   - ErrTokenExpired when the returned JWT has an already-expired exp claim.
 //   - Any parse error surfaced by ParseUnsigned for a malformed JWT.
+//
 // clientID and clientSecret are the IBM Verify credentials for the STS endpoint.
 // When clientSecret is non-empty, HTTP Basic auth (client_secret_basic) is used.
 // When clientSecret is empty, clientID is sent in the POST body (public client).
-func ExchangeTokens(subjectToken, actorToken, stsEndpoint, clientID, clientSecret string) (*DelegationJWT, error) {
+func ExchangeTokens(subjectToken, actorToken, stsEndpoint, clientID, clientSecret, authorizationDetails string) (*DelegationJWT, error) {
 	body := url.Values{}
 	body.Set("grant_type", grantTypeTokenExchange)
 	body.Set("subject_token", subjectToken)
 	body.Set("subject_token_type", tokenTypeAccessToken)
 	body.Set("actor_token", actorToken)
 	body.Set("actor_token_type", tokenTypeAccessToken)
+	if authorizationDetails != "" {
+		body.Set("authorization_details", authorizationDetails)
+	}
 
 	var useBasicAuth bool
 	if clientSecret != "" {
