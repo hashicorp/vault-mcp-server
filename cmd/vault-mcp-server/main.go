@@ -51,7 +51,10 @@ const (
 	defaultDelegationJWTFile = "vault-mcp-delegation.jwt"
 )
 
-// exportDelegationJWT persists the delegation JWT to a file and exports both// the token and the file path as environment variables so the MCP server can// use them while starting a session. It is a no-op when jwt is nil (auth// disabled / VAULT_TOKEN fallback path).
+// exportDelegationJWT persists the delegation JWT to a file and exports both
+// the token and the file path as environment variables so the MCP server can
+// use them while starting a session. It is a no-op when jwt is nil (auth
+// disabled / VAULT_TOKEN fallback path).
 func exportDelegationJWT(jwt *auth.DelegationJWT) error {
 	if jwt == nil {
 		return nil
@@ -153,6 +156,10 @@ You can specify the host, port, and endpoint path to customize where the server 
 func runHTTPServer(logger *log.Logger, host string, port string, endpointPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Run the OBO delegation pipeline before any MCP session starts.
+	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
+	// preserving the existing VAULT_TOKEN fallback path unchanged.
 	cfg := authConfigFromEnv()
 	jwt, err := auth.AcquireTokens(ctx, cfg, auth.RunPKCEFlows)
 	if err != nil {
