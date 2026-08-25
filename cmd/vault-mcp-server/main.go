@@ -16,11 +16,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
 	"github.com/hashicorp/vault-mcp-server/version"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -31,6 +33,11 @@ const (
 	DefaultBindPort     = "8080"
 	DefaultEndPointPath = "/mcp"
 )
+
+// activeDelegationJWT holds the Delegation JWT acquired at startup for the stdio
+// server. It is set by runStdioServer before the MCP session loop begins and read
+// by the session hook (task-011). nil when auth is disabled (VAULT_TOKEN path).
+var activeDelegationJWT *auth.DelegationJWT
 
 var (
 	rootCmd = &cobra.Command{
@@ -114,7 +121,7 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
+	hcServer := NewServer(version.Version, logger, nil)
 	tools.InitTools(hcServer, logger)
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
@@ -227,32 +234,74 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	return nil
 }
 
+// authConfigFromEnv constructs an AuthConfig from well-known environment variables.
+func authConfigFromEnv() auth.AuthConfig {
+	enabled := os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true"
+	return auth.AuthConfig{
+		Enabled:         enabled,
+		ClientID:        os.Getenv("VAULT_MCP_CLIENT_ID"),
+		ClientSecret:    os.Getenv("VAULT_MCP_CLIENT_SECRET"),
+		AuthURL:         os.Getenv("VAULT_MCP_AUTH_URL"),
+		TokenURL:        os.Getenv("VAULT_MCP_TOKEN_URL"),
+		RedirectURL:     os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		STSEndpoint:     os.Getenv("VAULT_MCP_STS_ENDPOINT"),
+		STSClientID:     os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
+		STSClientSecret: os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),
+	}
+}
+
 func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
+	// Run the OBO delegation pipeline before any MCP session starts.
+	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
+	// preserving the existing VAULT_TOKEN fallback path unchanged.
+	cfg := authConfigFromEnv()
+	jwt, err := auth.AcquireTokens(ctx, cfg, auth.RunPKCEFlows)
+	if err != nil {
+		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
+	}
+	activeDelegationJWT = jwt
+
+	hcServer := NewServer(version.Version, logger, activeDelegationJWT)
 	tools.InitTools(hcServer, logger)
 
 	return serverInit(ctx, hcServer, logger)
 }
 
-func NewServer(version string, logger *log.Logger, opts ...server.ServerOption) *server.MCPServer {
+func NewServer(version string, logger *log.Logger, delegationJWT *auth.DelegationJWT, opts ...server.ServerOption) *server.MCPServer {
 	// Create rate limiting middleware with environment-based configuration
 	rateLimitConfig := client.LoadRateLimitConfigFromEnv()
 	rateLimitMiddleware := client.NewRateLimitMiddleware(rateLimitConfig, logger)
+
+	// jwtMiddleware stamps the DelegationJWT into every tool-handler context so
+	// that GetVaultClientFromContext can authenticate to Vault using the JWT.
+	// When delegationJWT is nil (HTTP path / auth disabled), this is a no-op.
+	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if delegationJWT != nil {
+				ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			}
+			return next(ctx, req)
+		}
+	}
 
 	// Add default options
 	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 		server.WithToolHandlerMiddleware(rateLimitMiddleware.Middleware()),
+		server.WithToolHandlerMiddleware(jwtMiddleware),
 	}
 	opts = append(defaultOpts, opts...)
 
 	// Create hooks for session management
 	hooks := &server.Hooks{}
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+		if delegationJWT != nil {
+			ctx = client.WithDelegationJWT(ctx, delegationJWT)
+		}
 		client.NewSessionHandler(ctx, session, logger)
 	})
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {

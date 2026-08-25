@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -156,7 +157,7 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 			http.Error(w, "Missing code. You may close this tab.", http.StatusBadRequest)
 			return
 		}
-		fmt.Printf("[vault-mcp-server] %s auth code received: %s\n", label, code)
+		fmt.Fprintf(os.Stderr, "[vault-mcp-server] %s auth code received\n", label)
 		codeCh <- code
 		fmt.Fprintf(w, "Authentication successful (%s). You may close this tab.", label)
 	})
@@ -172,7 +173,7 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 
 	// Build the authorization URL.
 	authURL := buildAuthURL(cfg, challenge, state)
-	fmt.Printf("[vault-mcp-server] Opening browser for %s authentication:\n  %s\n", label, authURL)
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Opening browser for %s authentication:\n  %s\n", label, authURL)
 	openBrowser(authURL)
 
 	// Wait for the redirect code, a timeout, or a cancellation.
@@ -278,7 +279,7 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading token response: %w", err)
 	}
-	fmt.Printf("[vault-mcp-server] Token endpoint response (HTTP %d): %s\n", resp.StatusCode, string(raw))
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token endpoint response (HTTP %d)\n", resp.StatusCode)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
@@ -294,7 +295,7 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (string, error) {
 	if tok.AccessToken == "" {
 		return "", fmt.Errorf("token endpoint returned empty access_token")
 	}
-	fmt.Printf("[vault-mcp-server] Token exchange successful. Access token: %s\n", tok.AccessToken)
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful\n")
 	return tok.AccessToken, nil
 }
 // openBrowser attempts to open u in a private/incognito window.
