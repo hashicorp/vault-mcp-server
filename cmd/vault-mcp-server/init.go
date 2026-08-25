@@ -10,6 +10,7 @@ import (
 	stdlog "log"
 	"os"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/toolsets"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -30,6 +31,9 @@ func init() {
 	httpCmdAlias.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
 	httpCmdAlias.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
 	httpCmdAlias.Flags().String("mcp-endpoint", DefaultEndPointPath, "Path for streamable HTTP endpoint")
+
+	rootCmd.PersistentFlags().String("toolsets", "all", toolsets.GenerateToolsetsHelp())
+	rootCmd.PersistentFlags().String("tools", "", toolsets.GenerateToolsHelp())
 
 	rootCmd.AddCommand(stdioCmd)
 	rootCmd.AddCommand(streamableHTTPCmd)
