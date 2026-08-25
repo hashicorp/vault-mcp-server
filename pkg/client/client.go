@@ -8,12 +8,15 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
@@ -41,12 +44,48 @@ const (
 	VaultSkipTLSVerify   = "VAULT_SKIP_VERIFY"
 	VaultHeaderToken     = "X-Vault-Token"
 	VaultHeaderNamespace = "X-Vault-Namespace"
+	VaultAuditDataHeader = "X-Vault-Audit-Data"
 )
 
 const DefaultVaultAddress = "http://127.0.0.1:8200"
 
 // contextKey is a type alias to avoid lint warnings while maintaining compatibility
 type contextKey string
+
+// delegationJWTKey is the context key for storing a *auth.DelegationJWT.
+const delegationJWTKey contextKey = "delegation_jwt"
+
+// WithDelegationJWT returns a context carrying the given DelegationJWT.
+// CreateVaultClientForSession reads it to configure the Vault client for the
+// OBO delegation path.
+func WithDelegationJWT(ctx context.Context, jwt *auth.DelegationJWT) context.Context {
+	return context.WithValue(ctx, delegationJWTKey, jwt)
+}
+
+// DelegationJWTFromContext extracts the DelegationJWT from ctx, if present.
+func DelegationJWTFromContext(ctx context.Context) (*auth.DelegationJWT, bool) {
+	jwt, ok := ctx.Value(delegationJWTKey).(*auth.DelegationJWT)
+	return jwt, ok && jwt != nil
+}
+
+// auditHeaderValue builds the X-Vault-Audit-Data header value for the given JWT.
+// Format: {"sub":"<sub>","act":"<act_sub>"}
+func auditHeaderValue(jwt *auth.DelegationJWT) string {
+	v := struct {
+		Sub string `json:"sub"`
+		Act string `json:"act"`
+	}{Sub: jwt.Sub, Act: jwt.Act.Sub}
+	b, _ := json.Marshal(v) // never fails for a plain struct with string fields
+	return string(b)
+}
+
+// nowFn is the clock used to check JWT expiry. Replaced in tests.
+var nowFn = time.Now
+
+// isJWTExpired returns true when the JWT has a non-zero exp that is in the past.
+func isJWTExpired(jwt *auth.DelegationJWT) bool {
+	return !jwt.Exp.IsZero() && nowFn().After(jwt.Exp)
+}
 
 // getEnv retrieves the value of an environment variable or returns a fallback value if not set
 func getEnv(key, fallback string) string {
@@ -105,17 +144,32 @@ func DeleteVaultClient(sessionId string) {
 }
 
 // GetVaultClientFromContext extracts Vault client from the MCP context.
-// Validates that the current request's token matches the cached token hash
-// to prevent session hijacking via leaked or guessed session IDs.
+//
+// JWT path (when a DelegationJWT is present in context):
+//   - If the JWT is expired, auth.ErrTokenExpired is returned immediately — no Vault call.
+//   - Otherwise CreateVaultClientForSession is called; it will set the JWT as the Vault
+//     token and attach the X-Vault-Audit-Data header.
+//
+// VAULT_TOKEN path (no JWT in context):
+//   - The existing token-hash cache validation is used unchanged.
 func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Client, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, fmt.Errorf("no active session")
 	}
 
-	// Log the session ID for debugging
 	logger.WithField("session_id", session.SessionID()).Debug("Retrieving Vault client for session")
 
+	// JWT path: expiry check happens before any cache lookup.
+	if jwt, ok := DelegationJWTFromContext(ctx); ok {
+		if isJWTExpired(jwt) {
+			return nil, auth.ErrTokenExpired
+		}
+		// Always rebuild — the JWT raw string is the token; cached hash irrelevant.
+		return CreateVaultClientForSession(ctx, session, logger)
+	}
+
+	// VAULT_TOKEN path: existing token-hash security validation.
 	requestToken := resolveVaultToken(ctx)
 
 	if entry := getSessionEntry(session.SessionID()); entry != nil {
@@ -135,7 +189,6 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 	}
 
 	logger.WithField("session_id", session.SessionID()).Warn("Vault client not found, creating a new one")
-
 	return CreateVaultClientForSession(ctx, session, logger)
 }
 
@@ -162,6 +215,24 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
+	// JWT path: use the raw JWT string as the Vault token and inject audit header.
+	if jwt, ok := DelegationJWTFromContext(ctx); ok {
+		newClient, err := NewVaultClient(session.SessionID(), vaultAddress, false, jwt.Raw, "")
+		if err != nil {
+			return nil, fmt.Errorf("NewVaultClient failed (JWT path): %v", err)
+		}
+		newClient.AddHeader(VaultAuditDataHeader, auditHeaderValue(jwt))
+
+		logger.WithFields(log.Fields{
+			"session_id": session.SessionID(),
+			"vault_addr": vaultAddress,
+			"sub":        jwt.Sub,
+		}).Info("Created Vault client for session (JWT delegation path)")
+
+		return newClient, nil
+	}
+
+	// VAULT_TOKEN path: existing logic unchanged.
 	vaultToken := resolveVaultToken(ctx)
 	if vaultToken == "" {
 		return nil, fmt.Errorf("vault token not provided for session")
@@ -197,7 +268,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 			logger.WithFields(log.Fields{
 				"session_id": session.SessionID(),
 				"value":      envVal,
-		}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
+			}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
 		} else {
 			vaultSkipTLSVerify = parsed
 		}
