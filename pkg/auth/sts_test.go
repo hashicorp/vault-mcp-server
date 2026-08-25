@@ -57,7 +57,7 @@ func TestExchangeTokens_ValidTokens(t *testing.T) {
 
 	srv := newSTSServer(t, jwtStr, 0)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "", "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -71,7 +71,7 @@ func TestExchangeTokens_ValidTokens(t *testing.T) {
 func TestExchangeTokens_NonOKStatus(t *testing.T) {
 	srv := newSTSServer(t, "", http.StatusBadRequest)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "400")
@@ -85,7 +85,7 @@ func TestExchangeTokens_ExpiredJWT(t *testing.T) {
 
 	srv := newSTSServer(t, jwtStr, 0)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "", "")
 	assert.Nil(t, result)
 	assert.True(t, errors.Is(err, ErrTokenExpired),
 		"expected ErrTokenExpired, got: %v", err)
@@ -100,7 +100,7 @@ func TestExchangeTokens_STSErrorBody(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid_grant")
@@ -115,7 +115,7 @@ func TestExchangeTokens_EmptyAccessToken(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access_token")
@@ -136,7 +136,7 @@ func TestExchangeTokens_RequestBody_PublicClient(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "")
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{grantTypeTokenExchange}, capturedBody["grant_type"])
@@ -145,6 +145,7 @@ func TestExchangeTokens_RequestBody_PublicClient(t *testing.T) {
 	assert.Equal(t, []string{"my-actor-tok"}, capturedBody["actor_token"])
 	assert.Equal(t, []string{tokenTypeAccessToken}, capturedBody["actor_token_type"])
 	assert.Equal(t, []string{"ibm-client-id"}, capturedBody["client_id"])
+	assert.Empty(t, capturedBody["authorization_details"], "authorization_details must not appear when empty")
 }
 
 // TestExchangeTokens_RequestBody_ConfidentialClient: verifies that when a client secret
@@ -164,10 +165,54 @@ func TestExchangeTokens_RequestBody_ConfidentialClient(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "ibm-secret")
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "ibm-secret", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, "ibm-client-id", capturedUser)
 	assert.Equal(t, "ibm-secret", capturedPass)
 	assert.Empty(t, capturedBody["client_id"], "client_id must not appear in body when Basic auth is used")
+}
+
+// TestExchangeTokens_AuthorizationDetails_Sent: verifies that a non-empty
+// authorizationDetails value is forwarded as the authorization_details POST parameter.
+func TestExchangeTokens_AuthorizationDetails_Sent(t *testing.T) {
+	futureExp := time.Now().Add(1 * time.Hour).Unix()
+	jwtStr := buildDelegationJWT(t, "user@example.com", "mcp-server", futureExp)
+
+	const authzDetails = `[{"type":"vault:path_access","path":"secret-v2/data/shared-secret/foo","capabilities":["create","update","read"]}]`
+
+	var capturedBody map[string][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		capturedBody = map[string][]string(r.PostForm)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":%q}`, jwtStr)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "", authzDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{authzDetails}, capturedBody["authorization_details"])
+}
+
+// TestExchangeTokens_AuthorizationDetails_Empty: verifies that when authorizationDetails
+// is empty, the authorization_details parameter is absent from the POST body.
+func TestExchangeTokens_AuthorizationDetails_Empty(t *testing.T) {
+	futureExp := time.Now().Add(1 * time.Hour).Unix()
+	jwtStr := buildDelegationJWT(t, "user@example.com", "mcp-server", futureExp)
+
+	var capturedBody map[string][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		capturedBody = map[string][]string(r.PostForm)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":%q}`, jwtStr)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "", "")
+	require.NoError(t, err)
+
+	assert.Empty(t, capturedBody["authorization_details"])
 }
