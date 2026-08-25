@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -85,7 +86,9 @@ func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (
 		return nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
 	}
 
-	fmt.Printf("[vault-mcp-server] Delegate token. Access token: %s\n", jwt)
-    
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s)\n", jwt.Sub)
+
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (token=%s)\n", jwt)
+
 	return jwt, nil
 }
