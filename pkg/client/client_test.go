@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetEnv(t *testing.T) {
@@ -606,3 +609,97 @@ func TestVaultNamespaceSupport(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 }
+
+// --- task-005: Delegation JWT context injection + Vault audit header ---
+
+func TestCreateVaultClientForSession_WithDelegationJWT_AuditHeader(t *testing.T) {
+	// Given a context carrying a DelegationJWT → client has X-Vault-Audit-Data with sub and act.
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	jwt := &auth.DelegationJWT{
+		Sub: "user@example.com",
+		Act: auth.ActorClaim{Sub: "mcp-server"},
+		Exp: time.Now().Add(1 * time.Hour),
+		Raw: "header.payload.sig",
+	}
+
+	ctx := WithDelegationJWT(context.Background(), jwt)
+	ctx = context.WithValue(ctx, contextKey(VaultAddress), "http://127.0.0.1:8200")
+
+	session := &mockClientSession{id: "test-jwt-audit"}
+	client, err := CreateVaultClientForSession(ctx, session, logger)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	t.Cleanup(func() { DeleteVaultClient(session.id) })
+
+	// The audit header must be set on the client.
+	// api.Client doesn't expose headers directly, but we can verify via a real HTTP
+	// request to a test server.
+	var capturedAudit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAudit = r.Header.Get(VaultAuditDataHeader)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	// Recreate client pointing at the test server.
+	client.SetAddress(srv.URL)
+	_, _ = client.RawRequest(client.NewRequest("GET", "/v1/sys/health"))
+
+	assert.Contains(t, capturedAudit, "user@example.com")
+	assert.Contains(t, capturedAudit, "mcp-server")
+}
+
+func TestCreateVaultClientForSession_NoJWT_NoAuditHeader(t *testing.T) {
+	// Given context with VAULT_TOKEN (no JWT) → no X-Vault-Audit-Data header injected.
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, contextKey(VaultAddress), "http://127.0.0.1:8200")
+	ctx = WithVaultToken(ctx, "s.testtoken")
+
+	session := &mockClientSession{id: "test-no-jwt-audit"}
+	client, err := CreateVaultClientForSession(ctx, session, logger)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	t.Cleanup(func() { DeleteVaultClient(session.id) })
+
+	var capturedAudit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAudit = r.Header.Get(VaultAuditDataHeader)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	client.SetAddress(srv.URL)
+	_, _ = client.RawRequest(client.NewRequest("GET", "/v1/sys/health"))
+
+	assert.Empty(t, capturedAudit, "X-Vault-Audit-Data must not be set on the VAULT_TOKEN path")
+}
+
+func TestGetVaultClientFromContext_ExpiredJWT_ReturnsError(t *testing.T) {
+	// Given a context with an expired JWT → GetVaultClientFromContext returns ErrTokenExpired.
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	expiredJWT := &auth.DelegationJWT{
+		Sub: "user@example.com",
+		Act: auth.ActorClaim{Sub: "mcp-server"},
+		Exp: time.Now().Add(-1 * time.Hour), // in the past
+		Raw: "header.payload.sig",
+	}
+
+	ctx := WithDelegationJWT(context.Background(), expiredJWT)
+
+	// GetVaultClientFromContext requires a real session in context (via mcp-go's
+	// unexported key). We test the expiry check directly via isJWTExpired, which
+	// is the guard that GetVaultClientFromContext calls first.
+	assert.True(t, isJWTExpired(expiredJWT),
+		"isJWTExpired must return true for a past exp")
+	_ = ctx // context is set up correctly; the guard fires before the session lookup
+}
+

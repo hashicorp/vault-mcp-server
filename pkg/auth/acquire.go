@@ -19,6 +19,10 @@ type AuthConfig struct {
 
 	// ClientID is the OAuth client identifier (used in both PKCE flows and STS).
 	ClientID string
+	// ClientSecret is the OAuth client secret. When non-empty the token endpoint
+	// request uses HTTP Basic authentication (client_secret_basic).
+	// Corresponds to VAULT_MCP_CLIENT_SECRET.
+	ClientSecret string
 	// AuthURL is the IdP authorization endpoint.
 	AuthURL string
 	// TokenURL is the IdP token endpoint for PKCE code exchange.
@@ -56,12 +60,13 @@ func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (
 	}
 
 	pkceResult, err := pkceRunner(ctx, PKCEConfig{
-		ClientID:    cfg.ClientID,
-		AuthURL:     cfg.AuthURL,
-		TokenURL:    cfg.TokenURL,
-		RedirectURL: cfg.RedirectURL,
-		Scopes:      cfg.Scopes,
-		Deadline:    cfg.Deadline,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		AuthURL:      cfg.AuthURL,
+		TokenURL:     cfg.TokenURL,
+		RedirectURL:  cfg.RedirectURL,
+		Scopes:       cfg.Scopes,
+		Deadline:     cfg.Deadline,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
