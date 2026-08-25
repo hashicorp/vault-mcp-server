@@ -17,11 +17,12 @@ type AuthConfig struct {
 	// Corresponds to VAULT_MCP_AUTH_ENABLED=true.
 	Enabled bool
 
-	// ClientID is the OAuth client identifier (used in both PKCE flows and STS).
+	// ClientID is the OIDC client identifier used in the PKCE browser flows.
+	// Corresponds to VAULT_MCP_CLIENT_ID.
 	ClientID string
-	// ClientSecret is the OAuth client secret. When non-empty the token endpoint
-	// request uses HTTP Basic authentication (client_secret_basic).
-	// Corresponds to VAULT_MCP_CLIENT_SECRET.
+	// ClientSecret is the OIDC client secret for the PKCE token endpoint.
+	// When non-empty the token endpoint request uses HTTP Basic authentication
+	// (client_secret_basic). Corresponds to VAULT_MCP_CLIENT_SECRET.
 	ClientSecret string
 	// AuthURL is the IdP authorization endpoint.
 	AuthURL string
@@ -34,6 +35,13 @@ type AuthConfig struct {
 
 	// STSEndpoint is the RFC 8693 token exchange endpoint.
 	STSEndpoint string
+	// STSClientID is the IBM Verify client identifier sent to the STS endpoint.
+	// Corresponds to VAULT_MCP_STS_CLIENT_ID.
+	STSClientID string
+	// STSClientSecret is the IBM Verify client secret for the STS endpoint.
+	// When non-empty, credentials are sent via HTTP Basic auth (client_secret_basic).
+	// Corresponds to VAULT_MCP_STS_CLIENT_SECRET.
+	STSClientSecret string
 
 	// Deadline is the per-PKCE-flow timeout. Defaults to 5 minutes when zero.
 	Deadline time.Duration
@@ -72,10 +80,12 @@ func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (
 		return nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
 	}
 
-	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint)
+	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint, cfg.STSClientID, cfg.STSClientSecret)
 	if err != nil {
 		return nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
 	}
 
+	fmt.Printf("[vault-mcp-server] Delegate token. Access token: %s\n", jwt)
+    
 	return jwt, nil
 }

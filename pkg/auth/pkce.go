@@ -297,11 +297,74 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (string, error) {
 	fmt.Printf("[vault-mcp-server] Token exchange successful. Access token: %s\n", tok.AccessToken)
 	return tok.AccessToken, nil
 }
+// openBrowser attempts to open u in a private/incognito window.
+// It returns an error if no supported browser is available or if the
+// browser process cannot be started.
+func openBrowser(u string) error {
+	type candidate struct {
+		bin  string
+		flag string
+	}
+
+	var candidates []candidate
+
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = []candidate{
+			{"google-chrome", "--incognito"},
+			{"chromium", "--incognito"},
+			{"firefox", "--private-window"},
+			{"brave-browser", "--incognito"},
+		}
+	case "windows":
+		candidates = []candidate{
+			{"chrome", "--incognito"},
+			{"msedge", "--inprivate"},
+			{"firefox", "--private-window"},
+			{"brave", "--incognito"},
+		}
+	default: // Linux / BSD
+		candidates = []candidate{
+			{"google-chrome", "--incognito"},
+			{"google-chrome-stable", "--incognito"},
+			{"chromium-browser", "--incognito"},
+			{"chromium", "--incognito"},
+			{"firefox", "--private-window"},
+			{"brave-browser", "--incognito"},
+		}
+	}
+
+	var foundBrowser bool
+	var lastErr error
+
+	for _, c := range candidates {
+		path, err := exec.LookPath(c.bin)
+		if err != nil {
+			continue
+		}
+
+		foundBrowser = true
+
+		cmd := exec.Command(path, c.flag, u)
+		if err := cmd.Start(); err != nil {
+			lastErr = fmt.Errorf("failed to start %s in private mode: %w", c.bin, err)
+			continue
+		}
+
+		return nil
+	}
+
+	if !foundBrowser {
+		return fmt.Errorf("no supported browser found for opening private/incognito window")
+	}
+
+	return fmt.Errorf("failed to open URL in private/incognito window: %w", lastErr)
+}
 
 // openBrowser attempts to open u in an incognito/private window of the first
 // browser binary found on PATH, then falls back to the OS default opener.
 // Failure is non-fatal: the URL is already printed to stdout for manual use.
-func openBrowser(u string) {
+/*func openBrowser(u string) {
 	// Browsers tried in order; first match wins.
 	// Each entry is {binary, incognito-flag}.
 	type candidate struct{ bin, flag string }
@@ -352,4 +415,4 @@ func openBrowser(u string) {
 		cmd = exec.Command("xdg-open", u)
 	}
 	_ = cmd.Start()
-}
+}*/

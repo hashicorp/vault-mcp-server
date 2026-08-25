@@ -57,7 +57,7 @@ func TestExchangeTokens_ValidTokens(t *testing.T) {
 
 	srv := newSTSServer(t, jwtStr, 0)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL)
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -71,7 +71,7 @@ func TestExchangeTokens_ValidTokens(t *testing.T) {
 func TestExchangeTokens_NonOKStatus(t *testing.T) {
 	srv := newSTSServer(t, "", http.StatusBadRequest)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL)
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "400")
@@ -85,7 +85,7 @@ func TestExchangeTokens_ExpiredJWT(t *testing.T) {
 
 	srv := newSTSServer(t, jwtStr, 0)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL)
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
 	assert.Nil(t, result)
 	assert.True(t, errors.Is(err, ErrTokenExpired),
 		"expected ErrTokenExpired, got: %v", err)
@@ -100,7 +100,7 @@ func TestExchangeTokens_STSErrorBody(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL)
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid_grant")
@@ -115,14 +115,15 @@ func TestExchangeTokens_EmptyAccessToken(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL)
+	result, err := ExchangeTokens("subject-tok", "actor-tok", srv.URL, "ibm-client", "")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access_token")
 }
 
-// TestExchangeTokens_RequestBody: verifies the correct RFC 8693 fields are sent.
-func TestExchangeTokens_RequestBody(t *testing.T) {
+// TestExchangeTokens_RequestBody_PublicClient: verifies RFC 8693 fields plus client_id
+// in the POST body when no client secret is provided (public client).
+func TestExchangeTokens_RequestBody_PublicClient(t *testing.T) {
 	futureExp := time.Now().Add(1 * time.Hour).Unix()
 	jwtStr := buildDelegationJWT(t, "user@example.com", "mcp-server", futureExp)
 
@@ -135,7 +136,7 @@ func TestExchangeTokens_RequestBody(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL)
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{grantTypeTokenExchange}, capturedBody["grant_type"])
@@ -143,4 +144,30 @@ func TestExchangeTokens_RequestBody(t *testing.T) {
 	assert.Equal(t, []string{tokenTypeAccessToken}, capturedBody["subject_token_type"])
 	assert.Equal(t, []string{"my-actor-tok"}, capturedBody["actor_token"])
 	assert.Equal(t, []string{tokenTypeAccessToken}, capturedBody["actor_token_type"])
+	assert.Equal(t, []string{"ibm-client-id"}, capturedBody["client_id"])
+}
+
+// TestExchangeTokens_RequestBody_ConfidentialClient: verifies that when a client secret
+// is provided, credentials are sent via HTTP Basic auth and client_id is NOT in the body.
+func TestExchangeTokens_RequestBody_ConfidentialClient(t *testing.T) {
+	futureExp := time.Now().Add(1 * time.Hour).Unix()
+	jwtStr := buildDelegationJWT(t, "user@example.com", "mcp-server", futureExp)
+
+	var capturedBody map[string][]string
+	var capturedUser, capturedPass string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUser, capturedPass, _ = r.BasicAuth()
+		require.NoError(t, r.ParseForm())
+		capturedBody = map[string][]string(r.PostForm)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":%q}`, jwtStr)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := ExchangeTokens("my-subject-tok", "my-actor-tok", srv.URL, "ibm-client-id", "ibm-secret")
+	require.NoError(t, err)
+
+	assert.Equal(t, "ibm-client-id", capturedUser)
+	assert.Equal(t, "ibm-secret", capturedPass)
+	assert.Empty(t, capturedBody["client_id"], "client_id must not appear in body when Basic auth is used")
 }
