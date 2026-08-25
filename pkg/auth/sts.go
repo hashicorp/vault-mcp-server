@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 const (
@@ -30,7 +31,10 @@ const (
 //   - A descriptive error (including HTTP status) when the STS returns a non-2xx response.
 //   - ErrTokenExpired when the returned JWT has an already-expired exp claim.
 //   - Any parse error surfaced by ParseUnsigned for a malformed JWT.
-func ExchangeTokens(subjectToken, actorToken, stsEndpoint string) (*DelegationJWT, error) {
+// clientID and clientSecret are the IBM Verify credentials for the STS endpoint.
+// When clientSecret is non-empty, HTTP Basic auth (client_secret_basic) is used.
+// When clientSecret is empty, clientID is sent in the POST body (public client).
+func ExchangeTokens(subjectToken, actorToken, stsEndpoint, clientID, clientSecret string) (*DelegationJWT, error) {
 	body := url.Values{}
 	body.Set("grant_type", grantTypeTokenExchange)
 	body.Set("subject_token", subjectToken)
@@ -38,7 +42,23 @@ func ExchangeTokens(subjectToken, actorToken, stsEndpoint string) (*DelegationJW
 	body.Set("actor_token", actorToken)
 	body.Set("actor_token_type", tokenTypeAccessToken)
 
-	resp, err := http.PostForm(stsEndpoint, body)
+	var useBasicAuth bool
+	if clientSecret != "" {
+		useBasicAuth = true
+	} else {
+		body.Set("client_id", clientID)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, stsEndpoint, strings.NewReader(body.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("auth: building STS request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if useBasicAuth {
+		req.SetBasicAuth(clientID, clientSecret)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("auth: STS token exchange POST failed: %w", err)
 	}
