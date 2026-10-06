@@ -121,7 +121,7 @@ func TestRunSinglePKCEFlow_SuccessfulRedirect(t *testing.T) {
 
 	token, err := runSinglePKCEFlow(context.Background(), cfg, "Subject")
 	require.NoError(t, err)
-	assert.Equal(t, "subject-access-token", token)
+	assert.Equal(t, "subject-access-token", token.AccessToken)
 }
 
 // TestRunSinglePKCEFlow_Timeout: no redirect arrives → ErrAuthTimeout, listener shuts down.
@@ -199,7 +199,7 @@ func TestExchangeCode_ClientSecretBasic(t *testing.T) {
 	}
 	token, err := exchangeCode(cfg, "code-xyz", "verifier-abc", "state-123")
 	require.NoError(t, err)
-	assert.Equal(t, "tok", token)
+	assert.Equal(t, "tok", token.AccessToken)
 
 	// Basic auth header must be present.
 	assert.True(t, strings.HasPrefix(cap.AuthHeader, "Basic "),
@@ -223,7 +223,7 @@ func TestExchangeCode_PublicClient(t *testing.T) {
 	}
 	token, err := exchangeCode(cfg, "code-xyz", "verifier-abc", "state-123")
 	require.NoError(t, err)
-	assert.Equal(t, "tok", token)
+	assert.Equal(t, "tok", token.AccessToken)
 
 	assert.Empty(t, cap.AuthHeader, "no Authorization header for public client")
 	assert.Equal(t, "public-client", cap.Body.Get("client_id"))

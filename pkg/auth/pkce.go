@@ -66,13 +66,20 @@ type PKCEResult struct {
 	SubjectToken string
 	// ActorToken is the raw access token for the MCP Server (Actor flow).
 	ActorToken string
+	// SubjectRefreshToken and ActorRefreshToken are set only when the IdP issued
+	// a refresh_token; they allow the delegation JWT to be renewed without a new
+	// browser login.
+	SubjectRefreshToken string
+	ActorRefreshToken   string
 }
 
 // tokenResponse is the minimal subset of the OAuth token endpoint JSON response.
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	Error       string `json:"error"`
-	ErrorDesc   string `json:"error_description"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	Error        string `json:"error"`
+	ErrorDesc    string `json:"error_description"`
 }
 
 // RunPKCEFlows executes two sequential PKCE Authorization Code flows — first
@@ -82,25 +89,28 @@ type tokenResponse struct {
 // authorization code for a token, and shuts the listener down before the next
 // flow begins. The caller receives a PKCEResult with both raw access tokens.
 func RunPKCEFlows(ctx context.Context, cfg PKCEConfig) (*PKCEResult, error) {
-	subjectToken, err := runSinglePKCEFlow(ctx, cfg, "Subject")
+	subject, err := runSinglePKCEFlow(ctx, cfg, "Subject")
 	if err != nil {
 		return nil, fmt.Errorf("auth: Subject PKCE flow failed: %w", err)
 	}
 
-	actorToken, err := runSinglePKCEFlow(ctx, cfg, "Actor")
+	actor, err := runSinglePKCEFlow(ctx, cfg, "Actor")
 	if err != nil {
 		return nil, fmt.Errorf("auth: Actor PKCE flow failed: %w", err)
 	}
 
 	return &PKCEResult{
-		SubjectToken: subjectToken,
-		ActorToken:   actorToken,
+		SubjectToken:        subject.AccessToken,
+		ActorToken:          actor.AccessToken,
+		SubjectRefreshToken: subject.RefreshToken,
+		ActorRefreshToken:   actor.RefreshToken,
 	}, nil
 }
 
-// runSinglePKCEFlow runs one PKCE Authorization Code flow and returns the raw
-// access token string. label is used only for logging / stderr messages.
-func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (string, error) {
+// runSinglePKCEFlow runs one PKCE Authorization Code flow and returns the token
+// endpoint response (access token and, when issued, refresh token). label is used
+// only for logging / stderr messages.
+func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (*tokenResponse, error) {
 	deadline := cfg.Deadline
 	if deadline == 0 {
 		deadline = 5 * time.Minute
@@ -111,20 +121,20 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 	// Generate PKCE verifier and S256 challenge.
 	verifier, err := generateCodeVerifier()
 	if err != nil {
-		return "", fmt.Errorf("generating code verifier: %w", err)
+		return nil, fmt.Errorf("generating code verifier: %w", err)
 	}
 	challenge := codeChallenge(verifier)
 
 	// Generate a CSRF state token.
 	state, err := stateGenerator()
 	if err != nil {
-		return "", fmt.Errorf("generating state: %w", err)
+		return nil, fmt.Errorf("generating state: %w", err)
 	}
 
 	// Parse RedirectURL to extract the callback path and listener address.
 	redirURL, err := url.Parse(cfg.RedirectURL)
 	if err != nil {
-		return "", fmt.Errorf("parsing redirect URL: %w", err)
+		return nil, fmt.Errorf("parsing redirect URL: %w", err)
 	}
 	callbackPath := redirURL.Path
 	if callbackPath == "" {
@@ -164,7 +174,7 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return "", fmt.Errorf("starting local listener on %s: %w\n\thint: another process is using port %s — free it or set VAULT_MCP_REDIRECT_URL to a different port (e.g. http://localhost:49153/callback) and update the OAuth client's registered redirect URIs accordingly", listenAddr, err, redirURL.Port())
+		return nil, fmt.Errorf("starting local listener on %s: %w\n\thint: another process is using port %s — free it or set VAULT_MCP_REDIRECT_URL to a different port (e.g. http://localhost:49153/callback) and update the OAuth client's registered redirect URIs accordingly", listenAddr, err, redirURL.Port())
 	}
 
 	srv := &http.Server{Handler: mux}
@@ -181,12 +191,12 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 	case code := <-codeCh:
 		return exchangeCode(cfg, code, verifier, state)
 	case err := <-errCh:
-		return "", err
+		return nil, err
 	case <-flowCtx.Done():
 		if errors.Is(flowCtx.Err(), context.DeadlineExceeded) {
-			return "", ErrAuthTimeout
+			return nil, ErrAuthTimeout
 		}
-		return "", flowCtx.Err()
+		return nil, flowCtx.Err()
 	}
 }
 
@@ -242,62 +252,67 @@ func buildAuthURL(cfg PKCEConfig, challenge, state string) string {
 //
 // The state parameter is accepted but not forwarded to the token endpoint;
 // it was already validated by the callback handler before exchangeCode is called.
-func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (string, error) {
+func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (*tokenResponse, error) {
 	body := url.Values{}
 	body.Set("grant_type", "authorization_code")
 	body.Set("code", code)
 	body.Set("redirect_uri", cfg.RedirectURL)
 	body.Set("code_verifier", verifier)
 
-	// Credentials are added before encoding so the body length is computed once.
-	var useBasicAuth bool
-	if cfg.ClientSecret != "" {
-		// client_secret_basic: send credentials in Authorization header only.
-		useBasicAuth = true
-	} else {
-		// Public client: client_id in POST body.
-		body.Set("client_id", cfg.ClientID)
+	tok, err := postTokenForm(context.Background(), cfg.TokenURL, cfg.ClientID, cfg.ClientSecret, body)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful (expires_in=%ds, refresh_token=%t)\n", tok.ExpiresIn, tok.RefreshToken != "")
+	return tok, nil
+}
+
+// postTokenForm POSTs form to an OAuth token endpoint and returns the parsed
+// response. When clientSecret is set, credentials go in the Authorization header
+// (client_secret_basic); otherwise client_id is added to the body (public client).
+func postTokenForm(ctx context.Context, tokenURL, clientID, clientSecret string, form url.Values) (*tokenResponse, error) {
+	if clientSecret == "" {
+		form.Set("client_id", clientID)
 	}
 
-	encoded := body.Encode()
-	req, err := http.NewRequest(http.MethodPost, cfg.TokenURL, strings.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("building token request: %w", err)
+		return nil, fmt.Errorf("building token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if useBasicAuth {
-		req.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
+	if clientSecret != "" {
+		req.SetBasicAuth(clientID, clientSecret)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token endpoint POST failed: %w", err)
+		return nil, fmt.Errorf("token endpoint POST failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading token response: %w", err)
+		return nil, fmt.Errorf("reading token response: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token endpoint response (HTTP %d)\n", resp.StatusCode)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
 	}
 
 	var tok tokenResponse
 	if err := json.Unmarshal(raw, &tok); err != nil {
-		return "", fmt.Errorf("parsing token response: %w", err)
+		return nil, fmt.Errorf("parsing token response: %w", err)
 	}
 	if tok.Error != "" {
-		return "", fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
+		return nil, fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
 	}
 	if tok.AccessToken == "" {
-		return "", fmt.Errorf("token endpoint returned empty access_token")
+		return nil, fmt.Errorf("token endpoint returned empty access_token")
 	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful\n")
-	return tok.AccessToken, nil
+	return &tok, nil
 }
+
 // openBrowser attempts to open u in a private/incognito window.
 // It returns an error if no supported browser is available or if the
 // browser process cannot be started.
@@ -396,7 +411,7 @@ func openBrowser(u string) error {
 		}
 	}
 
-		
+
 	for _, c := range candidates {
 		if path, err := exec.LookPath(c.bin); err == nil {
 			_ = exec.Command(path, c.flag, u).Start()

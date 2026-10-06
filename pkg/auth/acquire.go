@@ -70,8 +70,24 @@ type PKCERunner func(ctx context.Context, cfg PKCEConfig) (*PKCEResult, error)
 // pkceRunner is normally RunPKCEFlows; tests substitute a fake to avoid browser/port
 // interactions.
 func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*DelegationJWT, error) {
+	jwt, _, err := acquire(ctx, cfg, pkceRunner)
+	return jwt, err
+}
+
+// AcquireTokenSource runs the same pipeline as AcquireTokens and wraps the result
+// in a TokenSource that can renew the Delegation JWT before it expires.
+// Returns (nil, nil) when cfg.Enabled is false.
+func AcquireTokenSource(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*TokenSource, error) {
+	jwt, pkceResult, err := acquire(ctx, cfg, pkceRunner)
+	if err != nil || jwt == nil {
+		return nil, err
+	}
+	return NewTokenSource(cfg, jwt, pkceResult), nil
+}
+
+func acquire(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*DelegationJWT, *PKCEResult, error) {
 	if !cfg.Enabled {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	pkceResult, err := pkceRunner(ctx, PKCEConfig{
@@ -84,17 +100,17 @@ func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (
 		Deadline:     cfg.Deadline,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
+		return nil, nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
 	}
 
 	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint, cfg.STSClientID, cfg.STSClientSecret, cfg.STSAuthorizationDetails)
 	if err != nil {
-		return nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
+		return nil, nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s)\n", jwt.Sub)
 
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (token=%s)\n", jwt)
 
-	return jwt, nil
+	return jwt, pkceResult, nil
 }
