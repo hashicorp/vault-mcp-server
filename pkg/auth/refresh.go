@@ -14,6 +14,8 @@ import (
 
 const (
 	// DefaultRefreshWindow is how long before expiry the Delegation JWT is renewed.
+	// Kept for reference: 870s ≈ 88% of a 7200s (2hr) JWT lifetime.
+	// Swap in the percentage-based window below (refreshIfNeeded) to use 90% instead.
 	DefaultRefreshWindow = 870 * time.Second
 	// DefaultRefreshInterval is how often the background loop checks the JWT expiry.
 	DefaultRefreshInterval = 30 * time.Second
@@ -120,7 +122,17 @@ func (s *TokenSource) Start(ctx context.Context) {
 // refreshIfNeeded renews the JWT when it is expired or within the refresh window.
 func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	current := s.Get()
-	if current == nil || current.Exp.IsZero() || time.Until(current.Exp) > s.window {
+	if current == nil || current.Exp.IsZero() {
+		return nil
+	}
+
+	// Fixed window: refresh when less than s.window remains (default 870s).
+	// window := s.window
+	// Percentage-based window (future): refresh when 90% of JWT lifetime has elapsed.
+	// Uncomment the line below and remove the fixed-window assignment above to switch.
+	window = current.Exp.Sub(current.Iat) * 10 / 100
+
+	if time.Until(current.Exp) > window {
 		return nil
 	}
 
