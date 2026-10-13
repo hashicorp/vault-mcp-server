@@ -130,7 +130,7 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	// window := s.window
 	// Percentage-based window (future): refresh when 90% of JWT lifetime has elapsed.
 	// Uncomment the line below and remove the fixed-window assignment above to switch.
-	window = current.Exp.Sub(current.Iat) * 10 / 100
+	window := current.Exp.Sub(current.Iat) * 10 / 100
 
 	if time.Until(current.Exp) > window {
 		return nil

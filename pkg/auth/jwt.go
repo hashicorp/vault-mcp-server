@@ -34,6 +34,9 @@ type DelegationJWT struct {
 	Act ActorClaim
 	// Exp is the expiry time extracted from the exp claim.
 	Exp time.Time
+	// Iat is the issued-at time from the iat claim. When the claim is absent
+	// it falls back to the time the JWT was parsed.
+	Iat time.Time
 	// AuthorizationDetails holds the raw RAR authorization_details array (RFC 9396).
 	// Each element is a raw JSON object; callers decode individual entries as needed.
 	AuthorizationDetails []json.RawMessage
@@ -43,10 +46,11 @@ type DelegationJWT struct {
 
 // jwtPayload is the internal struct used only during JSON unmarshalling of the JWT payload.
 type jwtPayload struct {
-	Sub                  string             `json:"sub"`
-	Act                  ActorClaim         `json:"act"`
-	Exp                  int64              `json:"exp"`
-	AuthorizationDetails []json.RawMessage  `json:"authorization_details"`
+	Sub                  string            `json:"sub"`
+	Act                  ActorClaim        `json:"act"`
+	Exp                  int64             `json:"exp"`
+	Iat                  int64             `json:"iat"`
+	AuthorizationDetails []json.RawMessage `json:"authorization_details"`
 }
 
 // ParseUnsigned decodes and parses the payload of a JWT without verifying its signature.
@@ -74,6 +78,10 @@ func ParseUnsigned(token string) (*DelegationJWT, error) {
 	}
 
 	exp := time.Unix(p.Exp, 0)
+	iat := time.Now()
+	if p.Iat > 0 {
+		iat = time.Unix(p.Iat, 0)
+	}
 	// Only check expiry when exp is explicitly set (non-zero). A zero value
 	// would produce epoch time (1970) and always appear expired.
 	if p.Exp > 0 && time.Now().After(exp) {
@@ -84,6 +92,7 @@ func ParseUnsigned(token string) (*DelegationJWT, error) {
 		Sub:                  p.Sub,
 		Act:                  p.Act,
 		Exp:                  exp,
+		Iat:                  iat,
 		AuthorizationDetails: p.AuthorizationDetails,
 		Raw:                  token,
 	}, nil

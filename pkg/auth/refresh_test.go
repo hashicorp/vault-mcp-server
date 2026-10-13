@@ -67,6 +67,8 @@ func initialJWT(t *testing.T, exp time.Time) *DelegationJWT {
 	t.Helper()
 	jwt, err := ParseUnsigned(buildDelegationJWT(t, "user@example.com", "mcp-server", exp.Unix()))
 	require.NoError(t, err)
+	// Test JWTs carry no iat claim; model a 2h lifetime so the 10% refresh window is 12m.
+	jwt.Iat = exp.Add(-2 * time.Hour)
 	return jwt
 }
 
