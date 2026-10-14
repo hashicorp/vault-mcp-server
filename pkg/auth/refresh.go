@@ -79,6 +79,14 @@ func (s *TokenSource) Get() *DelegationJWT {
 	return s.jwt
 }
 
+// DebugTokens returns the raw subject/actor access and refresh tokens.
+// TEMPORARY: for local debugging only; remove before GA (AC-11, AC-14).
+func (s *TokenSource) DebugTokens() (subject, subjectRefresh, actor, actorRefresh string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.subjectToken, s.subjectRefreshToken, s.actorToken, s.actorRefreshToken
+}
+
 // HasRefreshTokens reports whether the IdP issued refresh tokens for both identities.
 func (s *TokenSource) HasRefreshTokens() bool {
 	s.mu.RLock()
@@ -136,14 +144,18 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 		return nil
 	}
 
-	subjectToken, err := s.accessToken(ctx, &s.subjectToken, &s.subjectRefreshToken)
+	subjectToken, err := s.accessToken(&s.subjectToken, &s.subjectRefreshToken)
 	if err != nil {
 		return fmt.Errorf("renewing Subject token: %w", err)
 	}
-	actorToken, err := s.accessToken(ctx, &s.actorToken, &s.actorRefreshToken)
+	actorToken, err := s.accessToken(&s.actorToken, &s.actorRefreshToken)
 	if err != nil {
 		return fmt.Errorf("renewing Actor token: %w", err)
 	}
+
+	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
+	_, subRT, _, actRT := s.DebugTokens()
+	fmt.Fprintf(os.Stderr, "[debug] refreshed subject_token=%s\n[debug] refreshed subject_refresh_token=%s\n[debug] refreshed actor_token=%s\n[debug] refreshed actor_refresh_token=%s\n", subjectToken, subRT, actorToken, actRT)
 
 	jwt, err := ExchangeTokens(subjectToken, actorToken, s.cfg.STSEndpoint, s.cfg.STSClientID, s.cfg.STSClientSecret, s.cfg.STSAuthorizationDetails)
 	if err != nil {
@@ -166,7 +178,7 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 // token it fetches (and caches) a new access token, applying any rotated refresh
 // token immediately so a later failure in the same cycle does not lose it.
 // Without one it returns the cached access token.
-func (s *TokenSource) accessToken(ctx context.Context, token, refreshToken *string) (string, error) {
+func (s *TokenSource) accessToken(token, refreshToken *string) (string, error) {
 	s.mu.RLock()
 	cached, rt := *token, *refreshToken
 	s.mu.RUnlock()
@@ -177,7 +189,7 @@ func (s *TokenSource) accessToken(ctx context.Context, token, refreshToken *stri
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", rt)
-	tok, err := postTokenForm(ctx, s.cfg.TokenURL, s.cfg.ClientID, s.cfg.ClientSecret, form)
+	tok, err := postTokenForm(s.cfg.TokenURL, s.cfg.ClientID, s.cfg.ClientSecret, form)
 	if err != nil {
 		return "", err
 	}

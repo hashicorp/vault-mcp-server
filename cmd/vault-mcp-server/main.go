@@ -38,42 +38,6 @@ const (
 // before expiry. nil when auth is disabled (VAULT_TOKEN path).
 var activeTokenSource *auth.TokenSource
 
-const (
-	// delegationJWTEnvVar exposes the raw delegation JWT to the running process
-	// (and any child processes it spawns) so it can be used while starting an
-	// MCP session.
-	delegationJWTEnvVar = "VAULT_MCP_DELEGATION_JWT"
-	// delegationJWTFileEnvVar names the environment variable that points at the
-	// file the delegation JWT was written to.
-	delegationJWTFileEnvVar = "VAULT_MCP_DELEGATION_JWT_FILE"
-	// defaultDelegationJWTFile is used when delegationJWTFileEnvVar is unset.
-	defaultDelegationJWTFile = "vault-mcp-delegation.jwt"
-)
-
-// exportDelegationJWT persists the delegation JWT to a file and exports both
-// the token and the file path as environment variables so the MCP server can
-// use them while starting a session. It is a no-op when jwt is nil (auth
-// disabled / VAULT_TOKEN fallback path).
-func exportDelegationJWT(jwt *auth.DelegationJWT) error {
-	if jwt == nil {
-		return nil
-	}
-	jwtFile := os.Getenv(delegationJWTFileEnvVar)
-	if jwtFile == "" {
-		jwtFile = path.Join(os.TempDir(), defaultDelegationJWTFile)
-	}
-	if err := os.WriteFile(jwtFile, []byte(jwt.Raw), 0o600); err != nil {
-		return fmt.Errorf("failed to write delegation JWT to %s: %w", jwtFile, err)
-	}
-	if err := os.Setenv(delegationJWTEnvVar, jwt.Raw); err != nil {
-		return fmt.Errorf("failed to export %s: %w", delegationJWTEnvVar, err)
-	}
-	if err := os.Setenv(delegationJWTFileEnvVar, jwtFile); err != nil {
-		return fmt.Errorf("failed to export %s: %w", delegationJWTFileEnvVar, err)
-	}
-	return nil
-}
-
 var (
 	rootCmd = &cobra.Command{
 		Use:     "vault-mcp-server",
@@ -165,10 +129,12 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
 	}
 	activeTokenSource = tokenSource
-	if err := exportDelegationJWT(activeTokenSource.Get()); err != nil {
-		return fmt.Errorf("failed to export delegation JWT: %w", err)
+	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
+	if tokenSource != nil {
+		sub, subRT, act, actRT := tokenSource.DebugTokens()
+		fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
 	}
-	startTokenRefresh(ctx, activeTokenSource, logger)
+	startTokenRefresh(ctx, activeTokenSource)
 	hcServer := NewServer(version.Version, logger, activeTokenSource)
 	tools.InitTools(hcServer, logger)
 
@@ -299,17 +265,12 @@ func authConfigFromEnv() auth.AuthConfig {
 	}
 }
 
-// startTokenRefresh keeps the exported JWT file/env in sync with each renewed
-// Delegation JWT and starts the background refresh loop. No-op when ts is nil.
-func startTokenRefresh(ctx context.Context, ts *auth.TokenSource, logger *log.Logger) {
+// startTokenRefresh starts the background refresh loop that renews the
+// Delegation JWT in memory. No-op when ts is nil.
+func startTokenRefresh(ctx context.Context, ts *auth.TokenSource) {
 	if ts == nil {
 		return
 	}
-	ts.OnRefresh(func(jwt *auth.DelegationJWT) {
-		if err := exportDelegationJWT(jwt); err != nil {
-			logger.Warnf("failed to export refreshed delegation JWT: %v", err)
-		}
-	})
 	ts.Start(ctx)
 }
 
@@ -326,10 +287,12 @@ func runStdioServer(logger *log.Logger) error {
 		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
 	}
 	activeTokenSource = tokenSource
-	if err := exportDelegationJWT(activeTokenSource.Get()); err != nil {
-		return fmt.Errorf("failed to export delegation JWT: %w", err)
+	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
+	if tokenSource != nil {
+		sub, subRT, act, actRT := tokenSource.DebugTokens()
+		fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
 	}
-	startTokenRefresh(ctx, activeTokenSource, logger)
+	startTokenRefresh(ctx, activeTokenSource)
 	hcServer := NewServer(version.Version, logger, activeTokenSource)
 	tools.InitTools(hcServer, logger)
 

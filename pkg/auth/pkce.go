@@ -77,7 +77,6 @@ type PKCEResult struct {
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
 	Error        string `json:"error"`
 	ErrorDesc    string `json:"error_description"`
 }
@@ -259,23 +258,23 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (*tokenResponse, err
 	body.Set("redirect_uri", cfg.RedirectURL)
 	body.Set("code_verifier", verifier)
 
-	tok, err := postTokenForm(context.Background(), cfg.TokenURL, cfg.ClientID, cfg.ClientSecret, body)
+	tok, err := postTokenForm(cfg.TokenURL, cfg.ClientID, cfg.ClientSecret, body)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful (expires_in=%ds, refresh_token=%t)\n", tok.ExpiresIn, tok.RefreshToken != "")
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful (refresh_token=%t)\n", tok.RefreshToken != "")
 	return tok, nil
 }
 
 // postTokenForm POSTs form to an OAuth token endpoint and returns the parsed
 // response. When clientSecret is set, credentials go in the Authorization header
 // (client_secret_basic); otherwise client_id is added to the body (public client).
-func postTokenForm(ctx context.Context, tokenURL, clientID, clientSecret string, form url.Values) (*tokenResponse, error) {
+func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*tokenResponse, error) {
 	if clientSecret == "" {
 		form.Set("client_id", clientID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("building token request: %w", err)
 	}
