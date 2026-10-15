@@ -23,6 +23,29 @@ func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 	deleteMountTool := sys.DeleteMount(logger)
 	hcServer.AddTool(deleteMountTool.Tool, deleteMountTool.Handler)
 
+	// Tools for Vault replication status
+	readReplicationStatusTool := sys.ReadReplicationStatus(logger)
+	hcServer.AddTool(readReplicationStatusTool.Tool, readReplicationStatusTool.Handler)
+
+	// Tools for Vault cluster health
+	readClusterHealthTool := sys.ReadClusterHealth(logger)
+	hcServer.AddTool(readClusterHealthTool.Tool, readClusterHealthTool.Handler)
+
+	// Tools for Vault telemetry metrics
+	readMetricsTool := sys.ReadMetrics(logger)
+	hcServer.AddTool(readMetricsTool.Tool, readMetricsTool.Handler)
+
+	// Tools for Vault host diagnostics
+	readHostInfoTool := sys.ReadHostInfo(logger)
+	hcServer.AddTool(readHostInfoTool.Tool, readHostInfoTool.Handler)
+
+	// Tools for Vault lease management
+	listLeasesTool := sys.ListLeases(logger)
+	hcServer.AddTool(listLeasesTool.Tool, listLeasesTool.Handler)
+
+	readLeaseTool := sys.ReadLease(logger)
+	hcServer.AddTool(readLeaseTool.Tool, readLeaseTool.Handler)
+
 	// Tools for KV secrets management
 	listSecretsTool := kv.ListSecrets(logger)
 	hcServer.AddTool(listSecretsTool.Tool, listSecretsTool.Handler)
