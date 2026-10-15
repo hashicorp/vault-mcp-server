@@ -120,23 +120,22 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Run the OBO delegation pipeline before any MCP session starts.
-	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
-	// preserving the existing VAULT_TOKEN fallback path unchanged.
 	cfg := authConfigFromEnv()
-	tokenSource, err := auth.AcquireTokenSource(ctx, cfg, auth.RunPKCEFlows)
-	if err != nil {
-		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
-	}
-	activeTokenSource = tokenSource
-	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
-	if tokenSource != nil {
-		sub, subRT, act, actRT := tokenSource.DebugTokens()
-		fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
-	}
-	startTokenRefresh(ctx, activeTokenSource)
-	hcServer := NewServer(version.Version, logger, activeTokenSource)
+	hcServer := NewServer(version.Version, logger, nil)
 	tools.InitTools(hcServer, logger)
+
+	// When VAULT_MCP_AUTH_ENABLED is set, register the login tools so the user
+	// can authenticate from the chat instead of at server startup.
+	// When disabled, the VAULT_TOKEN fallback path is used as before.
+	if cfg.Enabled {
+		tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
+			activeTokenSource = ts
+			startTokenRefresh(ctx, ts)
+			// TEMPORARY debug logging; remove before GA (AC-11, AC-14).
+			//sub, subRT, act, actRT := ts.DebugTokens()
+			//fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
+		}, logger)
+	}
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
 }
@@ -278,23 +277,19 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Run the OBO delegation pipeline before any MCP session starts.
-	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
-	// preserving the existing VAULT_TOKEN fallback path unchanged.
 	cfg := authConfigFromEnv()
-	tokenSource, err := auth.AcquireTokenSource(ctx, cfg, auth.RunPKCEFlows)
-	if err != nil {
-		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
-	}
-	activeTokenSource = tokenSource
-	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
-	if tokenSource != nil {
-		sub, subRT, act, actRT := tokenSource.DebugTokens()
-		fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
-	}
-	startTokenRefresh(ctx, activeTokenSource)
-	hcServer := NewServer(version.Version, logger, activeTokenSource)
+	hcServer := NewServer(version.Version, logger, nil)
 	tools.InitTools(hcServer, logger)
+
+	if cfg.Enabled {
+		tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
+			activeTokenSource = ts
+			startTokenRefresh(ctx, ts)
+			// TEMPORARY debug logging; remove before GA (AC-11, AC-14).
+			//sub, subRT, act, actRT := ts.DebugTokens()
+			//fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
+		}, logger)
+	}
 
 	return serverInit(ctx, hcServer, logger)
 }
@@ -306,12 +301,14 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 
 	// jwtMiddleware stamps the DelegationJWT into every tool-handler context so
 	// that GetVaultClientFromContext can authenticate to Vault using the JWT.
-	// The JWT is read per request so a background refresh is picked up.
-	// When tokenSource is nil (auth disabled), this is a no-op.
+	// activeTokenSource is read on every request so login-after-startup is picked up.
+	// When no TokenSource exists yet (auth disabled or login pending), this is a no-op.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if delegationJWT := tokenSource.Get(); delegationJWT != nil {
-				ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			if ts := activeTokenSource; ts != nil {
+				if delegationJWT := ts.Get(); delegationJWT != nil {
+					ctx = client.WithDelegationJWT(ctx, delegationJWT)
+				}
 			}
 			return next(ctx, req)
 		}
@@ -329,8 +326,10 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 	// Create hooks for session management
 	hooks := &server.Hooks{}
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
-		if delegationJWT := tokenSource.Get(); delegationJWT != nil {
-			ctx = client.WithDelegationJWT(ctx, delegationJWT)
+		if ts := activeTokenSource; ts != nil {
+			if delegationJWT := ts.Get(); delegationJWT != nil {
+				ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			}
 		}
 		client.NewSessionHandler(ctx, session, logger)
 	})

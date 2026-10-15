@@ -81,6 +81,105 @@ type tokenResponse struct {
 	ErrorDesc    string `json:"error_description"`
 }
 
+// PKCEFlowResult is delivered on the channel returned by StartPKCEFlow.
+type PKCEFlowResult struct {
+	Token *tokenResponse
+	Err   error
+}
+
+// StartPKCEFlow starts a single PKCE Authorization Code flow and returns the
+// authorization URL immediately. The caller must open (or display) the URL.
+// The token endpoint response is delivered asynchronously on the returned
+// channel (buffered 1). The callback listener is shut down when a result is
+// sent or when ctx is cancelled.
+func StartPKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (authURL string, result <-chan PKCEFlowResult, err error) {
+	deadline := cfg.Deadline
+	if deadline == 0 {
+		deadline = 5 * time.Minute
+	}
+	flowCtx, cancel := context.WithTimeout(ctx, deadline)
+
+	verifier, err := generateCodeVerifier()
+	if err != nil {
+		cancel()
+		return "", nil, fmt.Errorf("generating code verifier: %w", err)
+	}
+	challenge := codeChallenge(verifier)
+
+	state, err := stateGenerator()
+	if err != nil {
+		cancel()
+		return "", nil, fmt.Errorf("generating state: %w", err)
+	}
+
+	redirURL, err := url.Parse(cfg.RedirectURL)
+	if err != nil {
+		cancel()
+		return "", nil, fmt.Errorf("parsing redirect URL: %w", err)
+	}
+	callbackPath := redirURL.Path
+	if callbackPath == "" {
+		callbackPath = "/callback"
+	}
+	listenAddr := redirURL.Host
+
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(callbackPath, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if idpErr := q.Get("error"); idpErr != "" {
+			errCh <- fmt.Errorf("auth: IdP returned error %q: %s", idpErr, q.Get("error_description"))
+			http.Error(w, "Authentication failed. You may close this tab.", http.StatusBadRequest)
+			return
+		}
+		if got := q.Get("state"); got != state {
+			errCh <- fmt.Errorf("auth: state mismatch (CSRF check failed)")
+			http.Error(w, "State mismatch. You may close this tab.", http.StatusBadRequest)
+			return
+		}
+		code := q.Get("code")
+		if code == "" {
+			errCh <- fmt.Errorf("auth: redirect missing 'code' parameter")
+			http.Error(w, "Missing code. You may close this tab.", http.StatusBadRequest)
+			return
+		}
+		codeCh <- code
+		fmt.Fprintf(w, "Authentication successful (%s). You may close this tab.", label)
+	})
+
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		cancel()
+		return "", nil, fmt.Errorf("starting local listener on %s: %w", listenAddr, err)
+	}
+
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+
+	ch := make(chan PKCEFlowResult, 1)
+	go func() {
+		defer cancel()
+		defer srv.Shutdown(context.Background()) //nolint:errcheck
+		select {
+		case code := <-codeCh:
+			tok, err := exchangeCode(cfg, code, verifier, state)
+			ch <- PKCEFlowResult{Token: tok, Err: err}
+		case err := <-errCh:
+			ch <- PKCEFlowResult{Err: err}
+		case <-flowCtx.Done():
+			if errors.Is(flowCtx.Err(), context.DeadlineExceeded) {
+				ch <- PKCEFlowResult{Err: ErrAuthTimeout}
+			} else {
+				ch <- PKCEFlowResult{Err: flowCtx.Err()}
+			}
+		}
+	}()
+
+	return buildAuthURL(cfg, challenge, state), ch, nil
+}
+
 // RunPKCEFlows executes two sequential PKCE Authorization Code flows — first
 // Subject (human user), then Actor (MCP Server) — using the provided config.
 // Each flow opens a temporary local HTTP listener, launches the browser to the

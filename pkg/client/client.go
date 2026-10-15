@@ -227,6 +227,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 			"session_id": session.SessionID(),
 			"vault_addr": vaultAddress,
 			"sub":        jwt.Sub,
+			"act":        jwt.Act.Sub,
 		}).Info("Created Vault client for session (JWT delegation path)")
 
 		return newClient, nil
@@ -287,13 +288,20 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 	return newClient, nil
 }
 
-// NewSessionHandler initializes a new Vault client for the session
+// NewSessionHandler initializes a new Vault client for the session.
+// When neither a delegation JWT nor a VAULT_TOKEN is available yet (login
+// pending), it skips client creation silently; the client will be created
+// lazily on the first tool call via GetVaultClientFromContext.
 func NewSessionHandler(ctx context.Context, session server.ClientSession, logger *log.Logger) {
-
+	_, hasJWT := DelegationJWTFromContext(ctx)
+	token := resolveVaultToken(ctx)
+	if !hasJWT && token == "" {
+		logger.WithField("session_id", session.SessionID()).Debug("NewSessionHandler: no credentials yet, deferring Vault client creation")
+		return
+	}
 	_, err := CreateVaultClientForSession(ctx, session, logger)
 	if err != nil {
 		logger.WithError(err).Error("NewSessionHandler failed to create Vault client")
-		return
 	}
 }
 

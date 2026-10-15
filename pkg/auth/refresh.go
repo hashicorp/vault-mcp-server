@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	// DefaultRefreshWindow is how long before expiry the Delegation JWT is renewed.
-	// Kept for reference: 870s ≈ 88% of a 7200s (2hr) JWT lifetime.
-	// Swap in the percentage-based window below (refreshIfNeeded) to use 90% instead.
+	// DefaultRefreshWindow is the fixed fallback: how long before expiry the Delegation JWT is renewed.
+	// refreshIfNeeded currently uses 10% of the JWT lifetime (Exp - Iat) instead.
 	DefaultRefreshWindow = 870 * time.Second
 	// DefaultRefreshInterval is how often the background loop checks the JWT expiry.
 	DefaultRefreshInterval = 30 * time.Second
@@ -154,8 +153,8 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	}
 
 	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
-	_, subRT, _, actRT := s.DebugTokens()
-	fmt.Fprintf(os.Stderr, "[debug] refreshed subject_token=%s\n[debug] refreshed subject_refresh_token=%s\n[debug] refreshed actor_token=%s\n[debug] refreshed actor_refresh_token=%s\n", subjectToken, subRT, actorToken, actRT)
+	// _, subRT, _, actRT := s.DebugTokens()
+	// fmt.Fprintf(os.Stderr, "[debug] refreshed subject_token=%s\n[debug] refreshed subject_refresh_token=%s\n[debug] refreshed actor_token=%s\n[debug] refreshed actor_refresh_token=%s\n", subjectToken, subRT, actorToken, actRT)
 
 	jwt, err := ExchangeTokens(subjectToken, actorToken, s.cfg.STSEndpoint, s.cfg.STSClientID, s.cfg.STSClientSecret, s.cfg.STSAuthorizationDetails)
 	if err != nil {
@@ -166,7 +165,7 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	s.jwt = jwt
 	s.mu.Unlock()
 
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT refreshed (sub=%s, exp=%s)\n", jwt.Sub, jwt.Exp.Format(time.RFC3339))
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT refreshed (sub=%s, act=%s, exp=%s)\n", jwt.Sub, jwt.Act.Sub, jwt.Exp.Format(time.RFC3339))
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT refreshed (token=%s)\n", jwt.Raw)
 	if s.onRefresh != nil {
 		s.onRefresh(jwt)

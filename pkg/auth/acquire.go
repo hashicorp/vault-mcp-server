@@ -108,7 +108,7 @@ func acquire(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*Deleg
 		return nil, nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s)\n", jwt.Sub)
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s, act=%s)\n", jwt.Sub, jwt.Act.Sub)
 
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (token=%s)\n", jwt)
 

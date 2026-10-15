@@ -4,12 +4,23 @@
 package tools
 
 import (
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
+	toolauth "github.com/hashicorp/vault-mcp-server/pkg/tools/auth"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/kv"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/pki"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/sys"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
+
+// InitLoginTools registers the vault_login_subject, vault_login_actor, and
+// vault_auth_status tools. onReady is called when authentication completes.
+func InitLoginTools(hcServer *server.MCPServer, cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger *log.Logger) {
+	loginSubject, loginActor, authStatus := toolauth.NewLoginTools(cfg, onReady, logger)
+	hcServer.AddTool(loginSubject.Tool, loginSubject.Handler)
+	hcServer.AddTool(loginActor.Tool, loginActor.Handler)
+	hcServer.AddTool(authStatus.Tool, authStatus.Handler)
+}
 
 func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 
