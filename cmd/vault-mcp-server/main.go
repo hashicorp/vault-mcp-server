@@ -257,6 +257,8 @@ func authConfigFromEnv() auth.AuthConfig {
 		AuthURL:                 os.Getenv("VAULT_MCP_AUTH_URL"),
 		TokenURL:                os.Getenv("VAULT_MCP_TOKEN_URL"),
 		RedirectURL:             os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		ActorUsername:           os.Getenv("VAULT_MCP_ACTOR_USERNAME"),
+		ActorPassword:           os.Getenv("VAULT_MCP_ACTOR_PASSWORD"),
 		STSEndpoint:             os.Getenv("VAULT_MCP_STS_ENDPOINT"),
 		STSClientID:             os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
 		STSClientSecret:         os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),

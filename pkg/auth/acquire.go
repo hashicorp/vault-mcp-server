@@ -34,6 +34,12 @@ type AuthConfig struct {
 	// Scopes is the list of OAuth scopes to request.
 	Scopes []string
 
+	// ActorUsername and ActorPassword, when both set, authenticate the agent
+	// (actor) non-interactively with the password grant instead of a browser.
+	// Corresponds to VAULT_MCP_ACTOR_USERNAME / VAULT_MCP_ACTOR_PASSWORD.
+	ActorUsername string
+	ActorPassword string
+
 	// STSEndpoint is the RFC 8693 token exchange endpoint.
 	STSEndpoint string
 	// STSClientID is the IBM Verify client identifier sent to the STS endpoint.

@@ -81,7 +81,11 @@ func (s *LoginState) loginSubjectTool() *ToolDef {
 		}
 		s.subjectCh = ch
 		go s.waitForSubject()
-		return mcp.NewToolResultText(fmt.Sprintf("Open this URL in your browser to sign in as the human subject:\n\n%s\n\nAfter signing in, call vault_login_actor.", pkceURL)), nil
+		next := "After signing in, call vault_login_actor."
+		if s.cfg.ActorUsername != "" && s.cfg.ActorPassword != "" {
+			next = "After signing in, the agent is authenticated automatically. Call vault_auth_status to confirm."
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Open this URL in your browser to sign in as the human subject:\n\n%s\n\n%s", pkceURL, next)), nil
 	}}
 }
 
@@ -156,6 +160,23 @@ func (s *LoginState) waitForSubject() {
 		return
 	}
 	s.subjectResult = &res
+
+	// Agent credentials configured: authenticate the actor non-interactively
+	// (password grant) and finish login without a second browser sign-in.
+	if s.cfg.ActorUsername != "" && s.cfg.ActorPassword != "" {
+		actor := auth.PasswordGrant(auth.PKCEConfig{
+			ClientID:     s.cfg.ClientID,
+			ClientSecret: s.cfg.ClientSecret,
+			TokenURL:     s.cfg.TokenURL,
+			Scopes:       s.cfg.Scopes,
+		}, s.cfg.ActorUsername, s.cfg.ActorPassword)
+		if actor.Err != nil {
+			s.logger.WithError(actor.Err).Error("Actor password login failed")
+			return
+		}
+		s.actorResult = &actor
+		s.completeLogin()
+	}
 }
 
 func (s *LoginState) waitForActorAndComplete() {
@@ -169,13 +190,17 @@ func (s *LoginState) waitForActorAndComplete() {
 		return
 	}
 	s.actorResult = &res
+	s.completeLogin()
+}
 
-	// STS exchange
+// completeLogin runs the STS exchange with the stored subject and actor tokens,
+// then publishes the TokenSource. Caller holds s.mu.
+func (s *LoginState) completeLogin() {
 	pkceResult := &auth.PKCEResult{
 		SubjectToken:        s.subjectResult.Token.AccessToken,
 		SubjectRefreshToken: s.subjectResult.Token.RefreshToken,
-		ActorToken:          res.Token.AccessToken,
-		ActorRefreshToken:   res.Token.RefreshToken,
+		ActorToken:          s.actorResult.Token.AccessToken,
+		ActorRefreshToken:   s.actorResult.Token.RefreshToken,
 	}
 	jwt, err := auth.ExchangeTokens(
 		pkceResult.SubjectToken, pkceResult.ActorToken,
