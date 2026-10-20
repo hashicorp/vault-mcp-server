@@ -56,9 +56,9 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// NewVaultClient creates a new Vault client for the given session
-func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bool, vaultToken string, vaultNamespace string) (*api.Client, error) {
-	// Initialize Vault client
+// buildVaultClient creates an *api.Client for the given address and TLS
+// setting, without touching the session cache or setting a token.
+func buildVaultClient(vaultAddress string, vaultSkipTLSVerify bool, vaultNamespace string) (*api.Client, error) {
 	config := api.DefaultConfig()
 	config.Address = vaultAddress
 
@@ -72,11 +72,21 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 		return nil, fmt.Errorf("api.NewClient failed to create Vault client: %v", err)
 	}
 
-	client.SetToken(vaultToken)
-
 	if vaultNamespace != "" {
 		client.SetNamespace(vaultNamespace)
 	}
+
+	return client, nil
+}
+
+// NewVaultClient creates a new Vault client for the given session
+func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bool, vaultToken string, vaultNamespace string) (*api.Client, error) {
+	client, err := buildVaultClient(vaultAddress, vaultSkipTLSVerify, vaultNamespace)
+	if err != nil {
+		return nil, err
+	}
+
+	client.SetToken(vaultToken)
 
 	activeClients.Store(sessionId, &sessionEntry{client: client, tokenHash: hashToken(vaultToken)})
 
