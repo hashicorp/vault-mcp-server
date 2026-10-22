@@ -143,6 +143,16 @@ func DeleteVaultClient(sessionId string) {
 	activeClients.Delete(sessionId)
 }
 
+// ClearVaultClients removes credentials cached for the process-wide login.
+func ClearVaultClients() {
+	activeClients.Range(func(key, value any) bool {
+		entry := value.(*sessionEntry)
+		entry.client.ClearToken()
+		activeClients.Delete(key)
+		return true
+	})
+}
+
 // GetVaultClientFromContext extracts Vault client from the MCP context.
 //
 // JWT path (when a DelegationJWT is present in context):
@@ -163,6 +173,7 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 	// JWT path: expiry check happens before any cache lookup.
 	if jwt, ok := DelegationJWTFromContext(ctx); ok {
 		if isJWTExpired(jwt) {
+			logger.WithFields(log.Fields{"sub": jwt.Sub, "act": jwt.Act.Sub, "outcome": "denied", "reason": "token_expired"}).Warn("Vault operation blocked before reaching Vault")
 			return nil, auth.ErrTokenExpired
 		}
 		// Always rebuild — the JWT raw string is the token; cached hash irrelevant.

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,7 +37,7 @@ const (
 
 // activeTokenSource holds the Delegation JWT acquired at startup and renews it
 // before expiry. nil when auth is disabled (VAULT_TOKEN path).
-var activeTokenSource *auth.TokenSource
+var activeTokenSource atomic.Pointer[auth.TokenSource]
 
 var (
 	rootCmd = &cobra.Command{
@@ -121,6 +122,11 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	defer stop()
 
 	cfg := authConfigFromEnv()
+	// M1 (AC-19): with agentic auth, only a loopback listener is supported.
+	if cfg.Enabled && !client.IsLoopbackHost(host) {
+		return fmt.Errorf("with VAULT_MCP_AUTH_ENABLED, the HTTP listener must be loopback-only (127.0.0.1, ::1 or localhost); got %q", host)
+	}
+
 	hcServer := NewServer(version.Version, logger, nil)
 	tools.InitTools(hcServer, logger)
 
@@ -128,13 +134,13 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	// can authenticate from the chat instead of at server startup.
 	// When disabled, the VAULT_TOKEN fallback path is used as before.
 	if cfg.Enabled {
-		tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
-			activeTokenSource = ts
+		closeLogin := tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
+			activeTokenSource.Store(ts)
 			startTokenRefresh(ctx, ts)
-			// TEMPORARY debug logging; remove before GA (AC-11, AC-14).
-			//sub, subRT, act, actRT := ts.DebugTokens()
-			//fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
 		}, logger)
+		closeSession := sessionCleanup(closeLogin, logger)
+		defer closeSession()
+		hcServer.GetHooks().AddOnUnregisterSession(func(context.Context, server.ClientSession) { closeSession() })
 	}
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
@@ -252,11 +258,14 @@ func authConfigFromEnv() auth.AuthConfig {
 	enabled := os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true"
 	return auth.AuthConfig{
 		Enabled:                 enabled,
-		ClientID:                os.Getenv("VAULT_MCP_CLIENT_ID"),
-		ClientSecret:            os.Getenv("VAULT_MCP_CLIENT_SECRET"),
+		SubjectClientID:         os.Getenv("VAULT_MCP_SUBJECT_CLIENT_ID"),
+		SubjectClientSecret:     os.Getenv("VAULT_MCP_SUBJECT_CLIENT_SECRET"),
+		ActorClientID:           os.Getenv("VAULT_MCP_ACTOR_CLIENT_ID"),
+		ActorClientSecret:       os.Getenv("VAULT_MCP_ACTOR_CLIENT_SECRET"),
 		AuthURL:                 os.Getenv("VAULT_MCP_AUTH_URL"),
 		TokenURL:                os.Getenv("VAULT_MCP_TOKEN_URL"),
 		RedirectURL:             os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		RevokeURL:               os.Getenv("VAULT_MCP_REVOKE_URL"),
 		ActorUsername:           os.Getenv("VAULT_MCP_ACTOR_USERNAME"),
 		ActorPassword:           os.Getenv("VAULT_MCP_ACTOR_PASSWORD"),
 		STSEndpoint:             os.Getenv("VAULT_MCP_STS_ENDPOINT"),
@@ -284,13 +293,13 @@ func runStdioServer(logger *log.Logger) error {
 	tools.InitTools(hcServer, logger)
 
 	if cfg.Enabled {
-		tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
-			activeTokenSource = ts
+		closeLogin := tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
+			activeTokenSource.Store(ts)
 			startTokenRefresh(ctx, ts)
-			// TEMPORARY debug logging; remove before GA (AC-11, AC-14).
-			//sub, subRT, act, actRT := ts.DebugTokens()
-			//fmt.Fprintf(os.Stderr, "[debug] subject_token=%s\n[debug] subject_refresh_token=%s\n[debug] actor_token=%s\n[debug] actor_refresh_token=%s\n", sub, subRT, act, actRT)
 		}, logger)
+		closeSession := sessionCleanup(closeLogin, logger)
+		defer closeSession()
+		hcServer.GetHooks().AddOnUnregisterSession(func(context.Context, server.ClientSession) { closeSession() })
 	}
 
 	return serverInit(ctx, hcServer, logger)
@@ -308,14 +317,27 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 	// with a "please login" message. When auth is disabled, this is a no-op.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if ts := activeTokenSource; ts != nil {
-				if delegationJWT := ts.Get(); delegationJWT != nil {
-					ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			delegationJWT := activeTokenSource.Load().Get()
+			if delegationJWT == nil {
+				if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" && !isLoginTool(req.Params.Name) {
+					logger.WithFields(log.Fields{"tool": req.Params.Name, "outcome": "denied", "reason": "not_authenticated"}).Warn("Vault operation blocked before reaching Vault")
+					return mcp.NewToolResultError("Not authenticated. Call vault_login_subject first, then sign in."), nil
 				}
-			} else if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" && !isLoginTool(req.Params.Name) {
-				return mcp.NewToolResultError("Not authenticated. Call vault_login_subject first, then sign in."), nil
+				return next(ctx, req)
 			}
-			return next(ctx, req)
+
+			ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			result, err := next(ctx, req)
+			// Audit trail on the MCP side: tool, human, agent and outcome only.
+			// Arguments and results are never logged (they may hold secrets).
+			if !isLoginTool(req.Params.Name) {
+				outcome := "success"
+				if err != nil || (result != nil && result.IsError) {
+					outcome = "error"
+				}
+				logger.WithFields(log.Fields{"tool": req.Params.Name, "sub": delegationJWT.Sub, "act": delegationJWT.Act.Sub, "outcome": outcome}).Info("Vault operation completed")
+			}
+			return result, err
 		}
 	}
 
@@ -331,7 +353,7 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 	// Create hooks for session management
 	hooks := &server.Hooks{}
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
-		if ts := activeTokenSource; ts != nil {
+		if ts := activeTokenSource.Load(); ts != nil {
 			if delegationJWT := ts.Get(); delegationJWT != nil {
 				ctx = client.WithDelegationJWT(ctx, delegationJWT)
 			}
@@ -352,6 +374,27 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 		opts...,
 	)
 	return s
+}
+
+func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
+	return func() {
+		// Revoke first: closeLogin also closes the token source and drops its tokens.
+		ts := activeTokenSource.Swap(nil)
+		if ts != nil {
+			switch err := ts.Revoke(); {
+			case errors.Is(err, auth.ErrRevokeNotConfigured):
+				logger.Warn("VAULT_MCP_REVOKE_URL not set; refresh tokens not revoked at IdP")
+			case err != nil:
+				logger.WithError(err).Warn("Token revocation at IdP failed; discarding credentials anyway")
+			default:
+				logger.Info("Refresh tokens revoked at IdP")
+			}
+		}
+		closeLogin()
+		ts.Close()
+		client.ClearVaultClients()
+		logger.Info("Authentication session closed; in-memory credentials discarded")
+	}
 }
 
 func isLoginTool(name string) bool {

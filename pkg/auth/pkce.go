@@ -181,18 +181,18 @@ func StartPKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (authURL s
 }
 
 // RunPKCEFlows executes two sequential PKCE Authorization Code flows — first
-// Subject (human user), then Actor (MCP Server) — using the provided config.
+// Subject (human user), then Actor (MCP Server) — using separate application configs.
 // Each flow opens a temporary local HTTP listener, launches the browser to the
 // IdP authorization URL, waits for the redirect callback, exchanges the
 // authorization code for a token, and shuts the listener down before the next
 // flow begins. The caller receives a PKCEResult with both raw access tokens.
-func RunPKCEFlows(ctx context.Context, cfg PKCEConfig) (*PKCEResult, error) {
-	subject, err := runSinglePKCEFlow(ctx, cfg, "Subject")
+func RunPKCEFlows(ctx context.Context, subjectCfg, actorCfg PKCEConfig) (*PKCEResult, error) {
+	subject, err := runSinglePKCEFlow(ctx, subjectCfg, "Subject")
 	if err != nil {
 		return nil, fmt.Errorf("auth: Subject PKCE flow failed: %w", err)
 	}
 
-	actor, err := runSinglePKCEFlow(ctx, cfg, "Actor")
+	actor, err := runSinglePKCEFlow(ctx, actorCfg, "Actor")
 	if err != nil {
 		return nil, fmt.Errorf("auth: Actor PKCE flow failed: %w", err)
 	}
@@ -368,6 +368,15 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (*tokenResponse, err
 // postTokenForm POSTs form to an OAuth token endpoint and returns the parsed
 // response. When clientSecret is set, credentials go in the Authorization header
 // (client_secret_basic); otherwise client_id is added to the body (public client).
+type oauthTokenError struct {
+	Code   string
+	Status int
+}
+
+func (e *oauthTokenError) Error() string {
+	return fmt.Sprintf("token endpoint error %q (HTTP %d)", e.Code, e.Status)
+}
+
 func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*tokenResponse, error) {
 	if clientSecret == "" {
 		form.Set("client_id", clientID)
@@ -395,6 +404,10 @@ func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*t
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token endpoint response (HTTP %d)\n", resp.StatusCode)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var tok tokenResponse
+		if resp.StatusCode < 500 && json.Unmarshal(raw, &tok) == nil && tok.Error != "" {
+			return nil, &oauthTokenError{Code: tok.Error, Status: resp.StatusCode}
+		}
 		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
 	}
 
@@ -403,7 +416,7 @@ func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*t
 		return nil, fmt.Errorf("parsing token response: %w", err)
 	}
 	if tok.Error != "" {
-		return nil, fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
+		return nil, &oauthTokenError{Code: tok.Error, Status: resp.StatusCode}
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("token endpoint returned empty access_token")

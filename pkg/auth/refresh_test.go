@@ -24,6 +24,8 @@ type refreshFixture struct {
 	stsCalls   atomic.Int32
 	idpStatus  int
 	refreshIDs []string
+	clientIDs  []string
+	secrets    []string
 }
 
 func newRefreshFixture(t *testing.T, newJWT string) *refreshFixture {
@@ -35,6 +37,12 @@ func newRefreshFixture(t *testing.T, newJWT string) *refreshFixture {
 		assert.Equal(t, "refresh_token", r.PostForm.Get("grant_type"))
 		n := f.idpCalls.Add(1)
 		f.refreshIDs = append(f.refreshIDs, r.PostForm.Get("refresh_token"))
+		id, secret, basic := r.BasicAuth()
+		if !basic {
+			id = r.PostForm.Get("client_id")
+		}
+		f.clientIDs = append(f.clientIDs, id)
+		f.secrets = append(f.secrets, secret)
 		if f.idpStatus != http.StatusOK {
 			http.Error(w, `{"error":"invalid_grant"}`, f.idpStatus)
 			return
@@ -55,10 +63,11 @@ func newRefreshFixture(t *testing.T, newJWT string) *refreshFixture {
 	t.Cleanup(sts.Close)
 
 	f.cfg = AuthConfig{
-		Enabled:     true,
-		ClientID:    "client",
-		TokenURL:    idp.URL,
-		STSEndpoint: sts.URL,
+		Enabled:         true,
+		SubjectClientID: "subject-app",
+		ActorClientID:   "actor-app",
+		TokenURL:        idp.URL,
+		STSEndpoint:     sts.URL,
 	}
 	return f
 }
@@ -70,6 +79,25 @@ func initialJWT(t *testing.T, exp time.Time) *DelegationJWT {
 	// Test JWTs carry no iat claim; model a 2h lifetime so the 10% refresh window is 12m.
 	jwt.Iat = exp.Add(-2 * time.Hour)
 	return jwt
+}
+
+func TestTokenSource_Close(t *testing.T) {
+	f := newRefreshFixture(t, "unused")
+	ts := NewTokenSource(f.cfg, initialJWT(t, time.Now().Add(time.Minute)),
+		&PKCEResult{SubjectToken: "subject", ActorToken: "actor", SubjectRefreshToken: "srt", ActorRefreshToken: "art"})
+	ts.Start(context.Background())
+	ts.Close()
+	ts.Close()
+	assert.Nil(t, ts.Get())
+	assert.False(t, ts.HasRefreshTokens())
+	assert.Empty(t, ts.subjectToken)
+	assert.Empty(t, ts.subjectRefreshToken)
+	assert.Empty(t, ts.actorToken)
+	assert.Empty(t, ts.actorRefreshToken)
+	require.NoError(t, ts.refreshIfNeeded(context.Background()))
+	assert.Zero(t, f.idpCalls.Load())
+	ts.Start(context.Background())
+	assert.Nil(t, ts.cancel)
 }
 
 func TestTokenSource_RefreshesWithinWindow(t *testing.T) {
@@ -86,10 +114,24 @@ func TestTokenSource_RefreshesWithinWindow(t *testing.T) {
 	assert.Equal(t, newRaw, ts.Get().Raw)
 	assert.Equal(t, newRaw, notified.Load().Raw)
 	assert.Equal(t, []string{"subject-rt", "actor-rt"}, f.refreshIDs)
+	assert.Equal(t, []string{"subject-app", "actor-app"}, f.clientIDs)
 	assert.EqualValues(t, 1, f.stsCalls.Load())
 	// Rotated refresh tokens replace the originals.
 	assert.Equal(t, "rotated-1", ts.subjectRefreshToken)
 	assert.Equal(t, "rotated-2", ts.actorRefreshToken)
+}
+
+func TestTokenSource_RefreshesWithSeparateApplications(t *testing.T) {
+	f := newRefreshFixture(t, buildDelegationJWT(t, "user", "actor", time.Now().Add(time.Hour).Unix()))
+	f.cfg.SubjectClientID, f.cfg.SubjectClientSecret = "subject-app", "subject-secret"
+	f.cfg.ActorClientID, f.cfg.ActorClientSecret = "actor-app", "actor-secret"
+	ts := NewTokenSource(f.cfg, initialJWT(t, time.Now().Add(time.Minute)),
+		&PKCEResult{SubjectRefreshToken: "subject-rt", ActorRefreshToken: "actor-rt"})
+
+	require.NoError(t, ts.refreshIfNeeded(context.Background()))
+	assert.Equal(t, []string{"subject-app", "actor-app"}, f.clientIDs)
+	assert.Equal(t, []string{"subject-secret", "actor-secret"}, f.secrets)
+	assert.Equal(t, []string{"subject-rt", "actor-rt"}, f.refreshIDs)
 }
 
 func TestTokenSource_RefreshesAlreadyExpiredJWT(t *testing.T) {
@@ -118,7 +160,7 @@ func TestTokenSource_SkipsWhenFarFromExpiry(t *testing.T) {
 
 func TestTokenSource_RefreshFailureKeepsCurrentJWT(t *testing.T) {
 	f := newRefreshFixture(t, "unused")
-	f.idpStatus = http.StatusBadRequest
+	f.idpStatus = http.StatusServiceUnavailable
 	jwt := initialJWT(t, time.Now().Add(time.Minute))
 	ts := NewTokenSource(f.cfg, jwt, &PKCEResult{SubjectRefreshToken: "s", ActorRefreshToken: "a"})
 
@@ -128,6 +170,33 @@ func TestTokenSource_RefreshFailureKeepsCurrentJWT(t *testing.T) {
 	assert.Contains(t, err.Error(), "Subject")
 	assert.Same(t, jwt, ts.Get())
 	assert.EqualValues(t, 0, f.stsCalls.Load())
+}
+
+func TestTokenSource_InvalidGrantRequiresReauthentication(t *testing.T) {
+	for _, identity := range []string{"subject", "actor"} {
+		t.Run(identity, func(t *testing.T) {
+			idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, r.ParseForm())
+				if r.PostForm.Get("refresh_token") == identity+"-rt" {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprint(w, `{"error":"invalid_grant"}`)
+					return
+				}
+				fmt.Fprint(w, `{"access_token":"renewed","refresh_token":"rotated"}`)
+			}))
+			t.Cleanup(idp.Close)
+			ts := NewTokenSource(AuthConfig{TokenURL: idp.URL}, initialJWT(t, time.Now().Add(time.Minute)),
+				&PKCEResult{SubjectToken: "subject", ActorToken: "actor", SubjectRefreshToken: "subject-rt", ActorRefreshToken: "actor-rt"})
+			invalidated := false
+			ts.OnInvalidated(func() { invalidated = true })
+			require.ErrorContains(t, ts.refreshIfNeeded(context.Background()), "re-authentication required")
+			assert.True(t, invalidated)
+			assert.Nil(t, ts.Get())
+			assert.False(t, ts.HasRefreshTokens())
+			assert.Empty(t, ts.subjectToken)
+			assert.Empty(t, ts.actorToken)
+		})
+	}
 }
 
 func TestTokenSource_NilAndNoRefreshTokens(t *testing.T) {
@@ -182,7 +251,7 @@ func TestAcquireTokenSource_CapturesRefreshTokens(t *testing.T) {
 	}))
 	t.Cleanup(sts.Close)
 
-	runner := func(context.Context, PKCEConfig) (*PKCEResult, error) {
+	runner := func(context.Context, PKCEConfig, PKCEConfig) (*PKCEResult, error) {
 		return &PKCEResult{SubjectToken: "s", ActorToken: "a", SubjectRefreshToken: "srt", ActorRefreshToken: "art"}, nil
 	}
 	ts, err := AcquireTokenSource(context.Background(), AuthConfig{Enabled: true, STSEndpoint: sts.URL}, runner)

@@ -19,12 +19,65 @@ import (
 // fakePKCERunner returns a PKCERunner that immediately returns the given tokens
 // without opening a browser or binding a port.
 func fakePKCERunner(subjectToken, actorToken string, err error) PKCERunner {
-	return func(_ context.Context, _ PKCEConfig) (*PKCEResult, error) {
+	return func(_ context.Context, _, _ PKCEConfig) (*PKCEResult, error) {
 		if err != nil {
 			return nil, err
 		}
 		return &PKCEResult{SubjectToken: subjectToken, ActorToken: actorToken}, nil
 	}
+}
+
+func TestAuthConfig_ApplicationCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		subjectID, subjectSecret         string
+		actorID, actorSecret             string
+		wantSubjectID, wantSubjectSecret string
+		wantActorID, wantActorSecret     string
+	}{
+		{name: "unset"},
+		{name: "separate", subjectID: "subject", subjectSecret: "subject-secret", actorID: "actor", actorSecret: "actor-secret", wantSubjectID: "subject", wantSubjectSecret: "subject-secret", wantActorID: "actor", wantActorSecret: "actor-secret"},
+		{name: "subject-only", subjectID: "subject", subjectSecret: "subject-secret", wantSubjectID: "subject", wantSubjectSecret: "subject-secret"},
+		{name: "actor-only", actorID: "actor", actorSecret: "actor-secret", wantActorID: "actor", wantActorSecret: "actor-secret"},
+		{name: "public", subjectID: "subject", actorID: "actor", wantSubjectID: "subject", wantActorID: "actor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := AuthConfig{
+				SubjectClientID: tc.subjectID, SubjectClientSecret: tc.subjectSecret,
+				ActorClientID: tc.actorID, ActorClientSecret: tc.actorSecret,
+				AuthURL: "https://idp/auth", TokenURL: "https://idp/token",
+				RedirectURL: "http://localhost/callback", Scopes: []string{"openid"}, Deadline: time.Minute,
+			}
+			subject, actor := cfg.SubjectPKCEConfig(), cfg.ActorPKCEConfig()
+			assert.Equal(t, tc.wantSubjectID, subject.ClientID)
+			assert.Equal(t, tc.wantSubjectSecret, subject.ClientSecret)
+			assert.Equal(t, tc.wantActorID, actor.ClientID)
+			assert.Equal(t, tc.wantActorSecret, actor.ClientSecret)
+			for _, flow := range []PKCEConfig{subject, actor} {
+				assert.Equal(t, cfg.AuthURL, flow.AuthURL)
+				assert.Equal(t, cfg.TokenURL, flow.TokenURL)
+				assert.Equal(t, cfg.RedirectURL, flow.RedirectURL)
+				assert.Equal(t, cfg.Scopes, flow.Scopes)
+				assert.Equal(t, cfg.Deadline, flow.Deadline)
+			}
+		})
+	}
+}
+
+func TestAcquireTokens_SeparateApplications(t *testing.T) {
+	sentinel := errors.New("stop before browser")
+	runner := func(_ context.Context, subjectCfg, actorCfg PKCEConfig) (*PKCEResult, error) {
+		assert.Equal(t, "subject", subjectCfg.ClientID)
+		assert.Equal(t, "subject-secret", subjectCfg.ClientSecret)
+		assert.Equal(t, "actor", actorCfg.ClientID)
+		assert.Equal(t, "actor-secret", actorCfg.ClientSecret)
+		return nil, sentinel
+	}
+	_, err := AcquireTokens(context.Background(), AuthConfig{
+		Enabled: true, SubjectClientID: "subject", SubjectClientSecret: "subject-secret",
+		ActorClientID: "actor", ActorClientSecret: "actor-secret",
+	}, runner)
+	require.ErrorIs(t, err, sentinel)
 }
 
 // TestAcquireTokens_Disabled: VAULT_MCP_AUTH_ENABLED=false → (nil, nil), no browser opened.
@@ -49,12 +102,13 @@ func TestAcquireTokens_ValidConfig(t *testing.T) {
 	t.Cleanup(stsSrv.Close)
 
 	cfg := AuthConfig{
-		Enabled:     true,
-		ClientID:    "test-client",
-		AuthURL:     "https://idp.example.com/auth",
-		TokenURL:    "https://idp.example.com/token",
-		RedirectURL: "http://localhost:9000/callback",
-		STSEndpoint: stsSrv.URL,
+		Enabled:         true,
+		SubjectClientID: "subject-client",
+		ActorClientID:   "actor-client",
+		AuthURL:         "https://idp.example.com/auth",
+		TokenURL:        "https://idp.example.com/token",
+		RedirectURL:     "http://localhost:9000/callback",
+		STSEndpoint:     stsSrv.URL,
 	}
 
 	runner := fakePKCERunner("subject-tok", "actor-tok", nil)

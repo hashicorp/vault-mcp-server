@@ -5,9 +5,12 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -40,9 +43,19 @@ type TokenSource struct {
 	actorToken          string
 	subjectRefreshToken string
 	actorRefreshToken   string
+	closed              bool
+	cancel              context.CancelFunc
 
 	// onRefresh, when set, is called with each newly issued JWT.
-	onRefresh func(*DelegationJWT)
+	onRefresh     func(*DelegationJWT)
+	onInvalidated func()
+}
+
+// OnInvalidated registers session cleanup before the renewal loop starts.
+func (s *TokenSource) OnInvalidated(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onInvalidated = fn
 }
 
 // NewTokenSource returns a TokenSource seeded with the initial JWT and the
@@ -78,12 +91,80 @@ func (s *TokenSource) Get() *DelegationJWT {
 	return s.jwt
 }
 
-// DebugTokens returns the raw subject/actor access and refresh tokens.
-// TEMPORARY: for local debugging only; remove before GA (AC-11, AC-14).
-func (s *TokenSource) DebugTokens() (subject, subjectRefresh, actor, actorRefresh string) {
+// revokeTimeout bounds each revocation request at the IdP.
+const revokeTimeout = 5 * time.Second
+
+// ErrRevokeNotConfigured is returned by Revoke when no revocation URL is set.
+var ErrRevokeNotConfigured = errors.New("revocation URL not configured")
+
+// Revoke asks the IdP to revoke the Subject and Actor refresh tokens (RFC 7009).
+// It is best effort: errors are returned for logging, never contain token
+// values, and the caller must still call Close.
+func (s *TokenSource) Revoke() error {
+	if s == nil || s.cfg.RevokeURL == "" {
+		return ErrRevokeNotConfigured
+	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.subjectToken, s.subjectRefreshToken, s.actorToken, s.actorRefreshToken
+	subjectRT, actorRT := s.subjectRefreshToken, s.actorRefreshToken
+	s.mu.RUnlock()
+
+	var errs []error
+	if err := s.revokeToken(subjectRT, s.cfg.SubjectPKCEConfig()); err != nil {
+		errs = append(errs, fmt.Errorf("subject: %w", err))
+	}
+	if err := s.revokeToken(actorRT, s.cfg.ActorPKCEConfig()); err != nil {
+		errs = append(errs, fmt.Errorf("actor: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+func (s *TokenSource) revokeToken(refreshToken string, cfg PKCEConfig) error {
+	if refreshToken == "" {
+		return nil
+	}
+	form := url.Values{}
+	form.Set("token", refreshToken)
+	form.Set("token_type_hint", "refresh_token")
+	if cfg.ClientSecret == "" {
+		form.Set("client_id", cfg.ClientID)
+	}
+	req, err := http.NewRequest(http.MethodPost, s.cfg.RevokeURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return errors.New("building revoke request")
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if cfg.ClientSecret != "" {
+		req.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
+	}
+	resp, err := (&http.Client{Timeout: revokeTimeout}).Do(req)
+	if err != nil {
+		return errors.New("revoke request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("revoke endpoint returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Close stops renewal and drops references to session credentials.
+// It is idempotent; Go does not guarantee physical erasure of string storage.
+func (s *TokenSource) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+	s.jwt = nil
+	s.subjectToken, s.actorToken = "", ""
+	s.subjectRefreshToken, s.actorRefreshToken = "", ""
+	s.onRefresh = nil
+	s.onInvalidated = nil
 }
 
 // HasRefreshTokens reports whether the IdP issued refresh tokens for both identities.
@@ -99,9 +180,16 @@ func (s *TokenSource) Start(ctx context.Context) {
 	if s == nil {
 		return
 	}
-	s.mu.RLock()
+	s.mu.Lock()
+	if s.closed || s.cancel != nil {
+		s.mu.Unlock()
+		return
+	}
 	haveTokens := s.subjectToken != "" && s.actorToken != ""
-	s.mu.RUnlock()
+	if haveTokens {
+		ctx, s.cancel = context.WithCancel(ctx)
+	}
+	s.mu.Unlock()
 	if !haveTokens {
 		fmt.Fprintf(os.Stderr, "[vault-mcp-server] No Subject/Actor tokens available; the Delegation JWT will not be renewed automatically\n")
 		return
@@ -143,18 +231,17 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 		return nil
 	}
 
-	subjectToken, err := s.accessToken(&s.subjectToken, &s.subjectRefreshToken)
+	subjectToken, err := s.accessToken(&s.subjectToken, &s.subjectRefreshToken, s.cfg.SubjectPKCEConfig())
 	if err != nil {
 		return fmt.Errorf("renewing Subject token: %w", err)
 	}
-	actorToken, err := s.accessToken(&s.actorToken, &s.actorRefreshToken)
+	actorToken, err := s.accessToken(&s.actorToken, &s.actorRefreshToken, s.cfg.ActorPKCEConfig())
 	if err != nil {
 		return fmt.Errorf("renewing Actor token: %w", err)
 	}
-
-	// TEMPORARY debug logging of raw tokens; remove before GA (AC-11, AC-14).
-	// _, subRT, _, actRT := s.DebugTokens()
-	// fmt.Fprintf(os.Stderr, "[debug] refreshed subject_token=%s\n[debug] refreshed subject_refresh_token=%s\n[debug] refreshed actor_token=%s\n[debug] refreshed actor_refresh_token=%s\n", subjectToken, subRT, actorToken, actRT)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	jwt, err := ExchangeTokens(subjectToken, actorToken, s.cfg.STSEndpoint, s.cfg.STSClientID, s.cfg.STSClientSecret, s.cfg.STSAuthorizationDetails)
 	if err != nil {
@@ -162,13 +249,17 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return context.Canceled
+	}
 	s.jwt = jwt
+	onRefresh := s.onRefresh
 	s.mu.Unlock()
 
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT refreshed (sub=%s, act=%s, exp=%s)\n", jwt.Sub, jwt.Act.Sub, jwt.Exp.Format(time.RFC3339))
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT refreshed (token=%s)\n", jwt.Raw)
-	if s.onRefresh != nil {
-		s.onRefresh(jwt)
+	if onRefresh != nil {
+		onRefresh(jwt)
 	}
 	return nil
 }
@@ -177,8 +268,12 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 // token it fetches (and caches) a new access token, applying any rotated refresh
 // token immediately so a later failure in the same cycle does not lose it.
 // Without one it returns the cached access token.
-func (s *TokenSource) accessToken(token, refreshToken *string) (string, error) {
+func (s *TokenSource) accessToken(token, refreshToken *string, cfg PKCEConfig) (string, error) {
 	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return "", context.Canceled
+	}
 	cached, rt := *token, *refreshToken
 	s.mu.RUnlock()
 	if rt == "" {
@@ -188,12 +283,27 @@ func (s *TokenSource) accessToken(token, refreshToken *string) (string, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", rt)
-	tok, err := postTokenForm(s.cfg.TokenURL, s.cfg.ClientID, s.cfg.ClientSecret, form)
+	tok, err := postTokenForm(cfg.TokenURL, cfg.ClientID, cfg.ClientSecret, form)
 	if err != nil {
+		var oauthErr *oauthTokenError
+		if errors.As(err, &oauthErr) && oauthErr.Code == "invalid_grant" {
+			s.mu.RLock()
+			onInvalidated := s.onInvalidated
+			s.mu.RUnlock()
+			s.Close()
+			if onInvalidated != nil {
+				onInvalidated()
+			}
+			return "", fmt.Errorf("re-authentication required: %w", err)
+		}
 		return "", err
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return "", context.Canceled
+	}
 	*token = tok.AccessToken
 	if tok.RefreshToken != "" {
 		*refreshToken = tok.RefreshToken

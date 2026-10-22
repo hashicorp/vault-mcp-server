@@ -7,11 +7,11 @@ package auth
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/hashicorp/vault-mcp-server/pkg/auth"
+	"github.com/hashicorp/vault-mcp-server/pkg/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
@@ -29,8 +29,10 @@ type LoginState struct {
 	actorResult   *auth.PKCEFlowResult
 
 	// channels for pending flows
-	subjectCh <-chan auth.PKCEFlowResult
-	actorCh   <-chan auth.PKCEFlowResult
+	subjectCh      <-chan auth.PKCEFlowResult
+	actorCh        <-chan auth.PKCEFlowResult
+	cancels        []context.CancelFunc
+	reauthRequired bool
 
 	// set once login is complete
 	tokenSourceReady atomic.Pointer[auth.TokenSource]
@@ -42,10 +44,39 @@ type LoginState struct {
 // NewLoginTools creates the login state and returns the three tools.
 // onReady is called (exactly once) when the TokenSource is ready.
 func NewLoginTools(cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger *log.Logger) (
-	loginSubject, loginActor, authStatus *ToolDef,
+	loginSubject, loginActor, authStatus *ToolDef, closeSession func(),
 ) {
 	s := &LoginState{cfg: cfg, onReady: onReady, logger: logger}
-	return s.loginSubjectTool(), s.loginActorTool(), s.authStatusTool()
+	return s.loginSubjectTool(), s.loginActorTool(), s.authStatusTool(), s.Close
+}
+
+// Close cancels pending login flows and clears the process-wide working session.
+func (s *LoginState) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeLocked()
+}
+
+func (s *LoginState) closeLocked() {
+	for _, cancel := range s.cancels {
+		cancel()
+	}
+	s.cancels = nil
+	s.subjectCh, s.actorCh = nil, nil
+	s.subjectResult, s.actorResult = nil, nil
+	s.tokenSourceReady.Swap(nil).Close()
+}
+
+func (s *LoginState) invalidateSession(ts *auth.TokenSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tokenSourceReady.Load() != ts {
+		return
+	}
+	s.closeLocked()
+	s.reauthRequired = true
+	client.ClearVaultClients()
+	s.logger.Warn("Renewal authorization ended; re-authentication required")
 }
 
 // ToolDef pairs an mcp.Tool with its handler, matching the pattern used in this repo.
@@ -67,20 +98,16 @@ func (s *LoginState) loginSubjectTool() *ToolDef {
 		if s.tokenSourceReady.Load() != nil {
 			return mcp.NewToolResultText("Already authenticated. Call vault_auth_status to confirm."), nil
 		}
-		pkceURL, ch, err := auth.StartPKCEFlow(context.Background(), auth.PKCEConfig{
-			ClientID:     s.cfg.ClientID,
-			ClientSecret: s.cfg.ClientSecret,
-			AuthURL:      s.cfg.AuthURL,
-			TokenURL:     s.cfg.TokenURL,
-			RedirectURL:  s.cfg.RedirectURL,
-			Scopes:       s.cfg.Scopes,
-			Deadline:     s.cfg.Deadline,
-		}, "Subject")
+		flowCtx, cancel := context.WithCancel(context.Background())
+		pkceURL, ch, err := auth.StartPKCEFlow(flowCtx, s.cfg.SubjectPKCEConfig(), "Subject")
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("starting subject login: %w", err)
 		}
 		s.subjectCh = ch
-		go s.waitForSubject()
+		s.reauthRequired = false
+		s.cancels = append(s.cancels, cancel)
+		go s.waitForSubject(ch)
 		next := "After signing in, call vault_login_actor."
 		if s.cfg.ActorUsername != "" && s.cfg.ActorPassword != "" {
 			next = "After signing in, the agent is authenticated automatically. Call vault_auth_status to confirm."
@@ -105,20 +132,15 @@ func (s *LoginState) loginActorTool() *ToolDef {
 		if s.tokenSourceReady.Load() != nil {
 			return mcp.NewToolResultText("Already authenticated. Call vault_auth_status to confirm."), nil
 		}
-		pkceURL, ch, err := auth.StartPKCEFlow(context.Background(), auth.PKCEConfig{
-			ClientID:     s.cfg.ClientID,
-			ClientSecret: s.cfg.ClientSecret,
-			AuthURL:      s.cfg.AuthURL,
-			TokenURL:     s.cfg.TokenURL,
-			RedirectURL:  s.cfg.RedirectURL,
-			Scopes:       s.cfg.Scopes,
-			Deadline:     s.cfg.Deadline,
-		}, "Actor")
+		flowCtx, cancel := context.WithCancel(context.Background())
+		pkceURL, ch, err := auth.StartPKCEFlow(flowCtx, s.cfg.ActorPKCEConfig(), "Actor")
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("starting actor login: %w", err)
 		}
 		s.actorCh = ch
-		go s.waitForActorAndComplete()
+		s.cancels = append(s.cancels, cancel)
+		go s.waitForActorAndComplete(ch)
 		return mcp.NewToolResultText(fmt.Sprintf("Open this URL in your browser to sign in as the agent actor:\n\n%s\n\nAfter signing in, call vault_auth_status to confirm login.", pkceURL)), nil
 	}}
 }
@@ -130,6 +152,9 @@ func (s *LoginState) authStatusTool() *ToolDef {
 	return &ToolDef{Tool: t, Handler: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.reauthRequired {
+			return mcp.NewToolResultText("Re-authentication required. Call vault_login_subject to start."), nil
+		}
 		if ts := s.tokenSourceReady.Load(); ts != nil {
 			jwt := ts.Get()
 			if jwt != nil {
@@ -149,11 +174,13 @@ func (s *LoginState) authStatusTool() *ToolDef {
 	}}
 }
 
-func (s *LoginState) waitForSubject() {
-	ch := s.subjectCh
+func (s *LoginState) waitForSubject(ch <-chan auth.PKCEFlowResult) {
 	res := <-ch
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.subjectCh != ch {
+		return
+	}
 	s.subjectCh = nil
 	if res.Err != nil {
 		s.logger.WithError(res.Err).Error("Subject PKCE flow failed")
@@ -164,12 +191,7 @@ func (s *LoginState) waitForSubject() {
 	// Agent credentials configured: authenticate the actor non-interactively
 	// (password grant) and finish login without a second browser sign-in.
 	if s.cfg.ActorUsername != "" && s.cfg.ActorPassword != "" {
-		actor := auth.PasswordGrant(auth.PKCEConfig{
-			ClientID:     s.cfg.ClientID,
-			ClientSecret: s.cfg.ClientSecret,
-			TokenURL:     s.cfg.TokenURL,
-			Scopes:       s.cfg.Scopes,
-		}, s.cfg.ActorUsername, s.cfg.ActorPassword)
+		actor := auth.PasswordGrant(s.cfg.ActorPKCEConfig(), s.cfg.ActorUsername, s.cfg.ActorPassword)
 		if actor.Err != nil {
 			s.logger.WithError(actor.Err).Error("Actor password login failed")
 			return
@@ -179,11 +201,13 @@ func (s *LoginState) waitForSubject() {
 	}
 }
 
-func (s *LoginState) waitForActorAndComplete() {
-	ch := s.actorCh
+func (s *LoginState) waitForActorAndComplete(ch <-chan auth.PKCEFlowResult) {
 	res := <-ch
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.actorCh != ch {
+		return
+	}
 	s.actorCh = nil
 	if res.Err != nil {
 		s.logger.WithError(res.Err).Error("Actor PKCE flow failed")
@@ -211,10 +235,9 @@ func (s *LoginState) completeLogin() {
 		return
 	}
 	ts := auth.NewTokenSource(s.cfg, jwt, pkceResult)
+	ts.OnInvalidated(func() { s.invalidateSession(ts) })
 	s.tokenSourceReady.Store(ts)
 	s.logger.WithFields(log.Fields{"sub": jwt.Sub, "act": jwt.Act.Sub}).Info("vault_login: authentication complete")
-	// TEMPORARY: print Delegation JWT for PoC/demo; remove before GA (AC-11, AC-14).
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (token=%s)\n", jwt.Raw)
 	if s.onReady != nil {
 		s.onReady(ts)
 	}

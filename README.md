@@ -31,7 +31,27 @@ and other MCP clients.
 - Go 1.24 or later (if building from source)
 - Docker
 - HashiCorp Vault server running locally or remotely
-- A valid Vault token with appropriate permissions
+- For delegated authentication: configured IBM Verify human/agent applications,
+  STS, and Vault OAuth resource server, identity mappings, Agent Registry, and policies
+- For legacy compatibility only: a valid Vault token with appropriate permissions
+
+## Authentication modes
+
+**Delegated authentication (M1 model):** Set `VAULT_MCP_AUTH_ENABLED=true` and
+configure the subject, actor, and STS applications. MCP manages the delegated
+authentication tokens and presents the delegation JWT directly to Vault. This
+model preserves the human subject and agent actor for Vault authorization and
+audit attribution. It does not require `VAULT_TOKEN`.
+
+**Legacy Vault-token authentication:** `VAULT_TOKEN` and the HTTP `X-Vault-Token`
+header remain available for compatibility when delegated authentication is
+disabled. This mode is **not recommended for production** and is **not equivalent
+to the dual-principal M1 security and audit model**: the supplied token alone does
+not establish both an authenticated human subject and a registered agent actor.
+Deprecation is planned; no removal date is defined.
+
+The delegated implementation is still under development; selecting this mode
+alone does not establish that all M1 production-readiness criteria are met.
 
 ## Setup
 
@@ -67,7 +87,8 @@ and other MCP clients.
 The server can be configured using environment variables:
 
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
-- `VAULT_TOKEN`: Vault authentication token (required)
+- `VAULT_MCP_AUTH_ENABLED`: Set to `true` to enable delegated authentication
+- `VAULT_TOKEN`: Legacy compatibility token, required only for the legacy environment-token path; not recommended for production and not equivalent to the dual-principal M1 model
 - `VAULT_NAMESPACE`: Vault namespace (optional)
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
@@ -80,7 +101,65 @@ The server can be configured using environment variables:
 - `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
 
+## Separate subject and actor applications
+
+For separate IBM Verify applications, configure:
+
+```bash
+export VAULT_MCP_SUBJECT_CLIENT_ID=subject-application-id
+export VAULT_MCP_SUBJECT_CLIENT_SECRET=subject-application-secret
+export VAULT_MCP_ACTOR_CLIENT_ID=actor-application-id
+export VAULT_MCP_ACTOR_CLIENT_SECRET=actor-application-secret
+```
+
+Each identity uses its application for browser login and token refresh. Automatic
+actor password login (`VAULT_MCP_ACTOR_USERNAME` / `VAULT_MCP_ACTOR_PASSWORD`) also
+uses the actor application; enable the password grant there when using that flow.
+Both applications share the existing authorization/token endpoints, redirect URL,
+and scopes. Register the redirect URL in both applications for browser login.
+Assign the subject group to the subject application and the agent group to the
+actor application, and configure STS to accept tokens from both.
+
+Configure both identity-specific client IDs; credentials never fall back to the
+other identity. An empty secret means a public client.
+The legacy `VAULT_MCP_CLIENT_ID` / `VAULT_MCP_CLIENT_SECRET` variables are no longer
+read; migrate to the four identity-specific variables above.
+STS client credentials and private-key JWT settings remain separate and unchanged.
+
+Any MCP session disconnect ends the process-wide delegated login, cancels pending
+login flows and renewal, and drops in-memory session credentials and cached Vault
+clients. Graceful shutdown does the same. Reconnecting (including from VS Code)
+requires authentication again. This cleanup does not revoke tokens at Verify;
+bounded session-end revocation remains pending.
+
+If Verify rejects a refresh token with `invalid_grant` (expired, revoked, or
+otherwise invalid), MCP clears the working session and requires a fresh login.
+Temporary network errors and server failures do not clear the session; renewal
+is retried, and expired delegation tokens remain blocked.
+
+## STS private-key authentication (testing)
+
+For the OBO STS exchange, keep `VAULT_MCP_STS_CLIENT_ID` and set:
+
+```bash
+export VAULT_MCP_STS_PRIVATE_KEY_FILE=/absolute/path/private.pem
+export VAULT_MCP_STS_KEY_ID=your-registered-key-id # optional
+# Only if STS requires an audience different from its exchange endpoint:
+export VAULT_MCP_STS_ASSERTION_AUDIENCE=https://your-required-audience
+```
+
+Use an unencrypted RSA private key (PKCS#1 or PKCS#8, at least 2048 bits).
+Register its public key with the STS client and enable `private_key_jwt` / RS256.
+The private key stays local; each exchange signs a fresh 60-second assertion.
+This setting overrides STS client-secret authentication, including login and refresh;
+it does not change subject/actor authentication. Unset it to restore existing behavior.
+Do not commit private keys.
+
 ## HTTP Mode Configuration
+
+The `X-Vault-Token` / `VAULT_TOKEN` options below are legacy authentication,
+not recommended for production and not equivalent to M1 dual-principal
+authentication. They are not required for delegated authentication.
 
 In HTTP mode, Vault configuration can be provided through multiple methods (in order of precedence):
 
@@ -98,6 +177,11 @@ The HTTP server includes a comprehensive middleware stack:
 - **Logging Middleware**: Structured HTTP request logging
 
 ## Integration with Visual Studio Code
+
+The examples below use legacy Vault-token authentication for compatibility.
+They are not recommended for production and do not provide M1 dual-principal
+identity/audit guarantees. For delegated authentication, configure the server's
+Verify settings and use the login tools instead of supplying a Vault token.
 
 1. In your project workspace root, create or open the `.vscode/mcp.json` configuration file. Alternatively, to add an MCP to your user configuration, run the `MCP: Open User Configuration` command, which opens the mcp.json file in your user profile. If the file does not exist, VS Code creates it for you.
 
@@ -191,9 +275,14 @@ The HTTP server includes a comprehensive middleware stack:
 
 1. Restart Visual Studio Code (or reload the window).
 
-**Note:** Visual Studio Code will prompt you for the VAULT_TOKEN once and store it securely in the client.
+**Note:** In these legacy examples, Visual Studio Code prompts for `VAULT_TOKEN`
+and manages the input. This is not the M1 memory-only, MCP-owned delegated-token
+flow; do not supply delegated or refresh tokens through this input.
 
 ## Integration with Gemini extensions
+
+The Vault-token example below is legacy compatibility guidance, not recommended
+for production and not equivalent to the M1 dual-principal security model.
 
 
 For security, avoid hardcoding your credentials, create or update `~/.gemini/.env` (where ~ is your home or project directory) for storing Vault Address, Token and Namespace

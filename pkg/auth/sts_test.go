@@ -4,18 +4,118 @@
 package auth
 
 import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExchangeTokens_PrivateKeyJWT(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+
+	for _, format := range []struct {
+		name string
+		der  []byte
+	}{
+		{"RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(key)},
+		{"PRIVATE KEY", pkcs8},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			keyPath := filepath.Join(t.TempDir(), "private.pem")
+			require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: format.name, Bytes: format.der}), 0600))
+			t.Setenv("VAULT_MCP_STS_PRIVATE_KEY_FILE", keyPath)
+			t.Setenv("VAULT_MCP_STS_KEY_ID", "test-key")
+			t.Setenv("VAULT_MCP_STS_ASSERTION_AUDIENCE", "")
+
+			var assertions []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Empty(t, r.Header.Get("Authorization"))
+				if err := r.ParseForm(); !assert.NoError(t, err) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				assert.Equal(t, "test-client", r.PostForm.Get("client_id"))
+				assert.Empty(t, r.PostForm.Get("client_secret"))
+				assert.Equal(t, "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", r.PostForm.Get("client_assertion_type"))
+				assert.Equal(t, "subject", r.PostForm.Get("subject_token"))
+				assert.Equal(t, "actor", r.PostForm.Get("actor_token"))
+				assert.Equal(t, grantTypeTokenExchange, r.PostForm.Get("grant_type"))
+				assertions = append(assertions, r.PostForm.Get("client_assertion"))
+				fmt.Fprintf(w, `{"access_token":%q}`, buildDelegationJWT(t, "user", "actor", time.Now().Add(time.Hour).Unix()))
+			}))
+			t.Cleanup(srv.Close)
+
+			var previousJTI string
+			for _, audience := range []string{srv.URL, "https://custom-audience.example"} {
+				if audience != srv.URL {
+					t.Setenv("VAULT_MCP_STS_ASSERTION_AUDIENCE", audience)
+				}
+				_, err := ExchangeTokens("subject", "actor", srv.URL, "test-client", "ignored-secret", "")
+				require.NoError(t, err)
+				parts := strings.Split(assertions[len(assertions)-1], ".")
+				require.Len(t, parts, 3)
+				headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+				require.NoError(t, err)
+				var header map[string]string
+				require.NoError(t, json.Unmarshal(headerBytes, &header))
+				assert.Equal(t, "RS256", header["alg"])
+				assert.Equal(t, "test-key", header["kid"])
+				claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+				require.NoError(t, err)
+				var claims struct {
+					Iss, Sub, Aud, Jti string
+					Iat, Exp           int64
+				}
+				require.NoError(t, json.Unmarshal(claimsBytes, &claims))
+				assert.Equal(t, "test-client", claims.Iss)
+				assert.Equal(t, "test-client", claims.Sub)
+				assert.Equal(t, audience, claims.Aud)
+				assert.Equal(t, int64(60), claims.Exp-claims.Iat)
+				assert.InDelta(t, time.Now().Unix(), claims.Iat, 5)
+				assert.NotEmpty(t, claims.Jti)
+				assert.NotEqual(t, previousJTI, claims.Jti)
+				previousJTI = claims.Jti
+				signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+				require.NoError(t, err)
+				digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+				require.NoError(t, rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], signature))
+			}
+		})
+	}
+}
+
+func TestExchangeTokens_PrivateKeyErrors(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "private.pem")
+	t.Setenv("VAULT_MCP_STS_PRIVATE_KEY_FILE", keyPath)
+	_, err := ExchangeTokens("subject", "actor", "http://unused", "client", "secret", "")
+	require.ErrorContains(t, err, "reading private key")
+
+	require.NoError(t, os.WriteFile(keyPath, []byte("not PEM"), 0600))
+	_, err = ExchangeTokens("subject", "actor", "http://unused", "client", "secret", "")
+	require.ErrorContains(t, err, "private key must be")
+
+	_, err = ExchangeTokens("subject", "actor", "http://unused", "", "", "")
+	require.ErrorContains(t, err, "STS client ID is required")
+}
 
 // buildDelegationJWT constructs a minimal unsigned JWT whose payload contains
 // the given claims, for use as a fake STS response body.

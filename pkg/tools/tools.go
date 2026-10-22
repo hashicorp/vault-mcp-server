@@ -15,11 +15,12 @@ import (
 
 // InitLoginTools registers the vault_login_subject, vault_login_actor, and
 // vault_auth_status tools. onReady is called when authentication completes.
-func InitLoginTools(hcServer *server.MCPServer, cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger *log.Logger) {
-	loginSubject, loginActor, authStatus := toolauth.NewLoginTools(cfg, onReady, logger)
+func InitLoginTools(hcServer *server.MCPServer, cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger *log.Logger) func() {
+	loginSubject, loginActor, authStatus, closeSession := toolauth.NewLoginTools(cfg, onReady, logger)
 	hcServer.AddTool(loginSubject.Tool, loginSubject.Handler)
 	hcServer.AddTool(loginActor.Tool, loginActor.Handler)
 	hcServer.AddTool(authStatus.Tool, authStatus.Handler)
+	return closeSession
 }
 
 func InitTools(hcServer *server.MCPServer, logger *log.Logger) {

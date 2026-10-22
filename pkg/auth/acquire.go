@@ -18,13 +18,12 @@ type AuthConfig struct {
 	// Corresponds to VAULT_MCP_AUTH_ENABLED=true.
 	Enabled bool
 
-	// ClientID is the OIDC client identifier used in the PKCE browser flows.
-	// Corresponds to VAULT_MCP_CLIENT_ID.
-	ClientID string
-	// ClientSecret is the OIDC client secret for the PKCE token endpoint.
-	// When non-empty the token endpoint request uses HTTP Basic authentication
-	// (client_secret_basic). Corresponds to VAULT_MCP_CLIENT_SECRET.
-	ClientSecret string
+	// Separate application credentials for each identity. An empty secret
+	// selects a public client; credentials are never shared between identities.
+	SubjectClientID     string
+	SubjectClientSecret string
+	ActorClientID       string
+	ActorClientSecret   string
 	// AuthURL is the IdP authorization endpoint.
 	AuthURL string
 	// TokenURL is the IdP token endpoint for PKCE code exchange.
@@ -39,6 +38,10 @@ type AuthConfig struct {
 	// Corresponds to VAULT_MCP_ACTOR_USERNAME / VAULT_MCP_ACTOR_PASSWORD.
 	ActorUsername string
 	ActorPassword string
+
+	// RevokeURL is the IdP RFC 7009 revocation endpoint, called on session end.
+	// Corresponds to VAULT_MCP_REVOKE_URL. Empty disables revocation.
+	RevokeURL string
 
 	// STSEndpoint is the RFC 8693 token exchange endpoint.
 	STSEndpoint string
@@ -60,10 +63,28 @@ type AuthConfig struct {
 	Deadline time.Duration
 }
 
+// SubjectPKCEConfig returns the subject application's effective configuration.
+func (cfg AuthConfig) SubjectPKCEConfig() PKCEConfig {
+	return cfg.pkceConfig(cfg.SubjectClientID, cfg.SubjectClientSecret)
+}
+
+// ActorPKCEConfig returns the actor application's effective configuration.
+func (cfg AuthConfig) ActorPKCEConfig() PKCEConfig {
+	return cfg.pkceConfig(cfg.ActorClientID, cfg.ActorClientSecret)
+}
+
+func (cfg AuthConfig) pkceConfig(clientID, clientSecret string) PKCEConfig {
+	return PKCEConfig{
+		ClientID: clientID, ClientSecret: clientSecret,
+		AuthURL: cfg.AuthURL, TokenURL: cfg.TokenURL,
+		RedirectURL: cfg.RedirectURL, Scopes: cfg.Scopes, Deadline: cfg.Deadline,
+	}
+}
+
 // PKCERunner is a function with the same signature as RunPKCEFlows.
 // It is exposed so that callers (tests) can substitute a fake implementation
 // without opening a browser or binding a network port.
-type PKCERunner func(ctx context.Context, cfg PKCEConfig) (*PKCEResult, error)
+type PKCERunner func(ctx context.Context, subjectCfg, actorCfg PKCEConfig) (*PKCEResult, error)
 
 // AcquireTokens runs the full OBO delegation pipeline:
 //  1. Two sequential PKCE Authorization Code flows via pkceRunner (Subject + Actor).
@@ -96,15 +117,7 @@ func acquire(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*Deleg
 		return nil, nil, nil
 	}
 
-	pkceResult, err := pkceRunner(ctx, PKCEConfig{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		AuthURL:      cfg.AuthURL,
-		TokenURL:     cfg.TokenURL,
-		RedirectURL:  cfg.RedirectURL,
-		Scopes:       cfg.Scopes,
-		Deadline:     cfg.Deadline,
-	})
+	pkceResult, err := pkceRunner(ctx, cfg.SubjectPKCEConfig(), cfg.ActorPKCEConfig())
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
 	}
@@ -115,8 +128,6 @@ func acquire(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*Deleg
 	}
 
 	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s, act=%s)\n", jwt.Sub, jwt.Act.Sub)
-
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (token=%s)\n", jwt)
 
 	return jwt, pkceResult, nil
 }

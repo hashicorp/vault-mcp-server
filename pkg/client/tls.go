@@ -6,6 +6,7 @@ package client
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
@@ -74,6 +75,17 @@ func GetTLSConfigFromEnv() (*TLSConfig, error) {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}, nil
+}
+
+// IsLoopbackHost reports whether host binds only to the loopback interface.
+// Unlike IsLocalHost it rejects 0.0.0.0, which listens on all interfaces.
+func IsLoopbackHost(host string) bool {
+	h := strings.Trim(strings.ToLower(host), "[]")
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 func IsLocalHost(host string) bool {
