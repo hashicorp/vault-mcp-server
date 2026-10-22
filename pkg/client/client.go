@@ -39,6 +39,11 @@ const (
 	VaultToken           = "VAULT_TOKEN"
 	VaultNamespace       = "VAULT_NAMESPACE"
 	VaultSkipTLSVerify   = "VAULT_SKIP_VERIFY"
+	VaultCACert          = "VAULT_CACERT"
+	VaultCAPath          = "VAULT_CAPATH"
+	VaultClientCert      = "VAULT_CLIENT_CERT"
+	VaultClientKey       = "VAULT_CLIENT_KEY"
+	VaultTLSServerName   = "VAULT_TLS_SERVER_NAME"
 	VaultHeaderToken     = "X-Vault-Token"
 	VaultHeaderNamespace = "X-Vault-Namespace"
 )
@@ -62,10 +67,32 @@ func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bo
 	config := api.DefaultConfig()
 	config.Address = vaultAddress
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: vaultSkipTLSVerify},
+	// Honor the standard Vault TLS environment variables so a private or
+	// self-signed CA can be trusted without modifying the host trust store.
+	// ConfigureTLS updates the existing transport's TLSClientConfig in place
+	// (RootCAs, client certificate, ServerName) instead of replacing it with a
+	// bare tls.Config, which previously discarded the configured RootCAs.
+	if err := config.ConfigureTLS(&api.TLSConfig{
+		CACert:        getEnv(VaultCACert, ""),
+		CAPath:        getEnv(VaultCAPath, ""),
+		ClientCert:    getEnv(VaultClientCert, ""),
+		ClientKey:     getEnv(VaultClientKey, ""),
+		TLSServerName: getEnv(VaultTLSServerName, ""),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to configure Vault TLS: %w", err)
 	}
-	config.HttpClient = &http.Client{Transport: tr}
+
+	// Apply the caller-resolved skip-verify decision explicitly. ConfigureTLS
+	// and ReadEnvironment (invoked by DefaultConfig) only ever set
+	// InsecureSkipVerify to true and never clear it, so set it directly here to
+	// preserve the context/env precedence resolved by the caller in both
+	// directions.
+	if tr, ok := config.HttpClient.Transport.(*http.Transport); ok {
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{}
+		}
+		tr.TLSClientConfig.InsecureSkipVerify = vaultSkipTLSVerify
+	}
 
 	client, err := api.NewClient(config)
 	if err != nil {
@@ -197,7 +224,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 			logger.WithFields(log.Fields{
 				"session_id": session.SessionID(),
 				"value":      envVal,
-		}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
+			}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
 		} else {
 			vaultSkipTLSVerify = parsed
 		}
