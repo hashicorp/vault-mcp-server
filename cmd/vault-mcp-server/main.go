@@ -304,13 +304,16 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 	// jwtMiddleware stamps the DelegationJWT into every tool-handler context so
 	// that GetVaultClientFromContext can authenticate to Vault using the JWT.
 	// activeTokenSource is read on every request so login-after-startup is picked up.
-	// When no TokenSource exists yet (auth disabled or login pending), this is a no-op.
+	// When auth is enabled and login is pending, non-login tool calls are refused
+	// with a "please login" message. When auth is disabled, this is a no-op.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if ts := activeTokenSource; ts != nil {
 				if delegationJWT := ts.Get(); delegationJWT != nil {
 					ctx = client.WithDelegationJWT(ctx, delegationJWT)
 				}
+			} else if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" && !isLoginTool(req.Params.Name) {
+				return mcp.NewToolResultError("Not authenticated. Call vault_login_subject first, then sign in."), nil
 			}
 			return next(ctx, req)
 		}
@@ -349,6 +352,10 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 		opts...,
 	)
 	return s
+}
+
+func isLoginTool(name string) bool {
+	return name == "vault_login_subject" || name == "vault_login_actor" || name == "vault_auth_status"
 }
 
 // runDefaultCommand handles the default behavior when no subcommand is provided
