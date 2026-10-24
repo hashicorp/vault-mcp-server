@@ -4,12 +4,24 @@
 package tools
 
 import (
+	"github.com/hashicorp/vault-mcp-server/pkg/auth"
+	toolauth "github.com/hashicorp/vault-mcp-server/pkg/tools/auth"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/kv"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/pki"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools/sys"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 )
+
+// InitLoginTools registers the vault_login_subject.
+func InitLoginTools(
+	hcServer *server.MCPServer,
+	cfg auth.AuthConfig,
+	store *auth.TokenStore,
+	logger *log.Logger,
+) {
+	toolauth.RegisterLogin(hcServer, cfg, store, logger)
+}
 
 func InitTools(hcServer *server.MCPServer, logger *log.Logger) {
 

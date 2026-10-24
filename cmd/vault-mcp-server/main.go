@@ -39,42 +39,6 @@ const (
 // by the session hook (task-011). nil when auth is disabled (VAULT_TOKEN path).
 var activeDelegationJWT *auth.DelegationJWT
 
-const (
-	// delegationJWTEnvVar exposes the raw delegation JWT to the running process
-	// (and any child processes it spawns) so it can be used while starting an
-	// MCP session.
-	delegationJWTEnvVar = "VAULT_MCP_DELEGATION_JWT"
-	// delegationJWTFileEnvVar names the environment variable that points at the
-	// file the delegation JWT was written to.
-	delegationJWTFileEnvVar = "VAULT_MCP_DELEGATION_JWT_FILE"
-	// defaultDelegationJWTFile is used when delegationJWTFileEnvVar is unset.
-	defaultDelegationJWTFile = "vault-mcp-delegation.jwt"
-)
-
-// exportDelegationJWT persists the delegation JWT to a file and exports both
-// the token and the file path as environment variables so the MCP server can
-// use them while starting a session. It is a no-op when jwt is nil (auth
-// disabled / VAULT_TOKEN fallback path).
-func exportDelegationJWT(jwt *auth.DelegationJWT) error {
-	if jwt == nil {
-		return nil
-	}
-	jwtFile := os.Getenv(delegationJWTFileEnvVar)
-	if jwtFile == "" {
-		jwtFile = path.Join(os.TempDir(), defaultDelegationJWTFile)
-	}
-	if err := os.WriteFile(jwtFile, []byte(jwt.Raw), 0o600); err != nil {
-		return fmt.Errorf("failed to write delegation JWT to %s: %w", jwtFile, err)
-	}
-	if err := os.Setenv(delegationJWTEnvVar, jwt.Raw); err != nil {
-		return fmt.Errorf("failed to export %s: %w", delegationJWTEnvVar, err)
-	}
-	if err := os.Setenv(delegationJWTFileEnvVar, jwtFile); err != nil {
-		return fmt.Errorf("failed to export %s: %w", delegationJWTFileEnvVar, err)
-	}
-	return nil
-}
-
 var (
 	rootCmd = &cobra.Command{
 		Use:     "vault-mcp-server",
@@ -157,20 +121,20 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Run the OBO delegation pipeline before any MCP session starts.
-	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
-	// preserving the existing VAULT_TOKEN fallback path unchanged.
+	// Load auth configuration; login runs only when the login tool is invoked.
 	cfg := authConfigFromEnv()
-	jwt, err := auth.AcquireTokens(ctx, cfg, auth.RunPKCEFlows)
-	if err != nil {
-		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
+
+	var store *auth.TokenStore
+	if cfg.Enabled {
+		store = &auth.TokenStore{}
 	}
-	activeDelegationJWT = jwt
-	if err := exportDelegationJWT(activeDelegationJWT); err != nil {
-		return fmt.Errorf("failed to export delegation JWT: %w", err)
-	}
-	hcServer := NewServer(version.Version, logger, activeDelegationJWT)
+
+	hcServer := NewServer(version.Version, logger, store)
 	tools.InitTools(hcServer, logger)
+
+	if cfg.Enabled {
+		tools.InitLoginTools(hcServer, cfg, store, logger)
+	}
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
 }
@@ -286,12 +250,17 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 func authConfigFromEnv() auth.AuthConfig {
 	enabled := os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true"
 	return auth.AuthConfig{
-		Enabled:         enabled,
-		ClientID:        os.Getenv("VAULT_MCP_CLIENT_ID"),
-		ClientSecret:    os.Getenv("VAULT_MCP_CLIENT_SECRET"),
-		AuthURL:         os.Getenv("VAULT_MCP_AUTH_URL"),
-		TokenURL:        os.Getenv("VAULT_MCP_TOKEN_URL"),
-		RedirectURL:     os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		Enabled:                 enabled,
+		AuthURL:                 os.Getenv("VAULT_MCP_AUTH_URL"),
+		TokenURL:                os.Getenv("VAULT_MCP_TOKEN_URL"),
+		RedirectURL:             os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		SubjectClientID:         os.Getenv("VAULT_MCP_SUBJECT_CLIENT_ID"),
+		SubjectClientSecret:     os.Getenv("VAULT_MCP_SUBJECT_CLIENT_SECRET"),
+		ActorClientID:           os.Getenv("VAULT_MCP_ACTOR_CLIENT_ID"),
+		ActorClientSecret:       os.Getenv("VAULT_MCP_ACTOR_CLIENT_SECRET"),
+		RevokeURL:               os.Getenv("VAULT_MCP_REVOKE_URL"),
+		ActorUsername:           os.Getenv("VAULT_MCP_ACTOR_USERNAME"),
+		ActorPassword:           os.Getenv("VAULT_MCP_ACTOR_PASSWORD"),
 		STSEndpoint:             os.Getenv("VAULT_MCP_STS_ENDPOINT"),
 		STSClientID:             os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
 		STSClientSecret:         os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),
@@ -303,25 +272,25 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Run the OBO delegation pipeline before any MCP session starts.
-	// AcquireTokens is a no-op when VAULT_MCP_AUTH_ENABLED is unset or false,
-	// preserving the existing VAULT_TOKEN fallback path unchanged.
+	// Load auth configuration; login runs only when the login tool is invoked.
 	cfg := authConfigFromEnv()
-	jwt, err := auth.AcquireTokens(ctx, cfg, auth.RunPKCEFlows)
-	if err != nil {
-		return fmt.Errorf("failed to acquire delegation tokens: %w", err)
+
+	var store *auth.TokenStore
+	if cfg.Enabled {
+		store = &auth.TokenStore{}
 	}
-	activeDelegationJWT = jwt
-	if err := exportDelegationJWT(activeDelegationJWT); err != nil {
-		return fmt.Errorf("failed to export delegation JWT: %w", err)
-	}
-	hcServer := NewServer(version.Version, logger, activeDelegationJWT)
+
+	hcServer := NewServer(version.Version, logger, store)
 	tools.InitTools(hcServer, logger)
+
+	if cfg.Enabled {
+		tools.InitLoginTools(hcServer, cfg, store, logger)
+	}
 
 	return serverInit(ctx, hcServer, logger)
 }
 
-func NewServer(version string, logger *log.Logger, delegationJWT *auth.DelegationJWT, opts ...server.ServerOption) *server.MCPServer {
+func NewServer(version string, logger *log.Logger, store *auth.TokenStore, opts ...server.ServerOption) *server.MCPServer {
 	// Create rate limiting middleware with environment-based configuration
 	rateLimitConfig := client.LoadRateLimitConfigFromEnv()
 	rateLimitMiddleware := client.NewRateLimitMiddleware(rateLimitConfig, logger)
@@ -331,8 +300,20 @@ func NewServer(version string, logger *log.Logger, delegationJWT *auth.Delegatio
 	// When delegationJWT is nil (HTTP path / auth disabled), this is a no-op.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if delegationJWT != nil {
-				ctx = client.WithDelegationJWT(ctx, delegationJWT)
+			if store != nil && req.Params.Name != "vault_login_subject" {
+				session := server.ClientSessionFromContext(ctx)
+				if session == nil {
+					return mcp.NewToolResultError("No active MCP session."), nil
+				}
+
+				jwt, ok := store.Get(session.SessionID())
+				if !ok {
+					return mcp.NewToolResultError(
+						"Not authenticated or token expired. Call vault_login_subject.",
+					), nil
+				}
+
+				ctx = client.WithDelegationJWT(ctx, jwt)
 			}
 			return next(ctx, req)
 		}
@@ -350,12 +331,15 @@ func NewServer(version string, logger *log.Logger, delegationJWT *auth.Delegatio
 	// Create hooks for session management
 	hooks := &server.Hooks{}
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
-		if delegationJWT != nil {
-			ctx = client.WithDelegationJWT(ctx, delegationJWT)
+		if store == nil {
+			client.NewSessionHandler(ctx, session, logger)
 		}
-		client.NewSessionHandler(ctx, session, logger)
 	})
+
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+		if store != nil {
+			store.Delete(session.SessionID())
+		}
 		client.EndSessionHandler(ctx, session, logger)
 	})
 
