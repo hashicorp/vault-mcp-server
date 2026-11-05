@@ -160,21 +160,3 @@ func getSessionIDFromContext(ctx context.Context) string {
 	}
 	return ""
 }
-
-// CleanupSessions removes inactive session limiters to prevent memory leaks
-func (m *RateLimitMiddleware) CleanupSessions(activeSessions []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	activeSet := make(map[string]bool)
-	for _, sessionID := range activeSessions {
-		activeSet[sessionID] = true
-	}
-
-	for sessionID := range m.sessionLimiters {
-		if !activeSet[sessionID] {
-			delete(m.sessionLimiters, sessionID)
-			m.logger.Debugf("Cleaned up rate limiter for inactive session: %s", sessionID)
-		}
-	}
-}

@@ -243,25 +243,3 @@ func TestTokenSource_ReusesCachedTokensWithoutRefreshTokens(t *testing.T) {
 	assert.Equal(t, "cached-subject", gotSubject)
 	assert.Equal(t, "cached-actor", gotActor)
 }
-
-func TestAcquireTokenSource_CapturesRefreshTokens(t *testing.T) {
-	raw := buildDelegationJWT(t, "user@example.com", "mcp-server", time.Now().Add(15*time.Minute).Unix())
-	sts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `{"access_token":%q}`, raw)
-	}))
-	t.Cleanup(sts.Close)
-
-	runner := func(context.Context, PKCEConfig, PKCEConfig) (*PKCEResult, error) {
-		return &PKCEResult{SubjectToken: "s", ActorToken: "a", SubjectRefreshToken: "srt", ActorRefreshToken: "art"}, nil
-	}
-	ts, err := AcquireTokenSource(context.Background(), AuthConfig{Enabled: true, STSEndpoint: sts.URL}, runner)
-
-	require.NoError(t, err)
-	require.NotNil(t, ts)
-	assert.Equal(t, raw, ts.Get().Raw)
-	assert.True(t, ts.HasRefreshTokens())
-
-	disabled, err := AcquireTokenSource(context.Background(), AuthConfig{}, nil)
-	require.NoError(t, err)
-	assert.Nil(t, disabled)
-}

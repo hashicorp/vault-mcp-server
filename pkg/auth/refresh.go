@@ -16,9 +16,6 @@ import (
 )
 
 const (
-	// DefaultRefreshWindow is the fixed fallback: how long before expiry the Delegation JWT is renewed.
-	// refreshIfNeeded currently uses 10% of the JWT lifetime (Exp - Iat) instead.
-	DefaultRefreshWindow = 870 * time.Second
 	// DefaultRefreshInterval is how often the background loop checks the JWT expiry.
 	DefaultRefreshInterval = 30 * time.Second
 )
@@ -34,7 +31,6 @@ const (
 type TokenSource struct {
 	cfg AuthConfig
 
-	window   time.Duration
 	interval time.Duration
 
 	mu                  sync.RWMutex
@@ -63,7 +59,6 @@ func (s *TokenSource) OnInvalidated(fn func()) {
 func NewTokenSource(cfg AuthConfig, jwt *DelegationJWT, pkce *PKCEResult) *TokenSource {
 	s := &TokenSource{
 		cfg:      cfg,
-		window:   DefaultRefreshWindow,
 		interval: DefaultRefreshInterval,
 		jwt:      jwt,
 	}
@@ -221,10 +216,7 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 		return nil
 	}
 
-	// Fixed window: refresh when less than s.window remains (default 870s).
-	// window := s.window
-	// Percentage-based window (future): refresh when 90% of JWT lifetime has elapsed.
-	// Uncomment the line below and remove the fixed-window assignment above to switch.
+	// Refresh when 90% of the JWT lifetime has elapsed.
 	window := current.Exp.Sub(current.Iat) * 10 / 100
 
 	if time.Until(current.Exp) > window {

@@ -3,16 +3,11 @@
 
 package auth
 
-import (
-	"context"
-	"fmt"
-	"os"
-	"time"
-)
+import "time"
 
 // AuthConfig holds the configuration for the OBO delegation pipeline.
-// When Enabled is false, AcquireTokens is a no-op and the server falls back
-// to the VAULT_TOKEN environment variable path.
+// When Enabled is false, the server falls back to the VAULT_TOKEN environment
+// variable path.
 type AuthConfig struct {
 	// Enabled activates the OBO pipeline when true.
 	// Corresponds to VAULT_MCP_AUTH_ENABLED=true.
@@ -79,55 +74,4 @@ func (cfg AuthConfig) pkceConfig(clientID, clientSecret string) PKCEConfig {
 		AuthURL: cfg.AuthURL, TokenURL: cfg.TokenURL,
 		RedirectURL: cfg.RedirectURL, Scopes: cfg.Scopes, Deadline: cfg.Deadline,
 	}
-}
-
-// PKCERunner is a function with the same signature as RunPKCEFlows.
-// It is exposed so that callers (tests) can substitute a fake implementation
-// without opening a browser or binding a network port.
-type PKCERunner func(ctx context.Context, subjectCfg, actorCfg PKCEConfig) (*PKCEResult, error)
-
-// AcquireTokens runs the full OBO delegation pipeline:
-//  1. Two sequential PKCE Authorization Code flows via pkceRunner (Subject + Actor).
-//  2. RFC 8693 token exchange against cfg.STSEndpoint.
-//  3. Lightweight JWT parse of the resulting Delegation JWT.
-//
-// Returns (nil, nil) when cfg.Enabled is false — the caller should fall back to
-// the VAULT_TOKEN environment variable path.
-//
-// pkceRunner is normally RunPKCEFlows; tests substitute a fake to avoid browser/port
-// interactions.
-func AcquireTokens(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*DelegationJWT, error) {
-	jwt, _, err := acquire(ctx, cfg, pkceRunner)
-	return jwt, err
-}
-
-// AcquireTokenSource runs the same pipeline as AcquireTokens and wraps the result
-// in a TokenSource that can renew the Delegation JWT before it expires.
-// Returns (nil, nil) when cfg.Enabled is false.
-func AcquireTokenSource(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*TokenSource, error) {
-	jwt, pkceResult, err := acquire(ctx, cfg, pkceRunner)
-	if err != nil || jwt == nil {
-		return nil, err
-	}
-	return NewTokenSource(cfg, jwt, pkceResult), nil
-}
-
-func acquire(ctx context.Context, cfg AuthConfig, pkceRunner PKCERunner) (*DelegationJWT, *PKCEResult, error) {
-	if !cfg.Enabled {
-		return nil, nil, nil
-	}
-
-	pkceResult, err := pkceRunner(ctx, cfg.SubjectPKCEConfig(), cfg.ActorPKCEConfig())
-	if err != nil {
-		return nil, nil, fmt.Errorf("auth: PKCE flows failed: %w", err)
-	}
-
-	jwt, err := ExchangeTokens(pkceResult.SubjectToken, pkceResult.ActorToken, cfg.STSEndpoint, cfg.STSClientID, cfg.STSClientSecret, cfg.STSAuthorizationDetails)
-	if err != nil {
-		return nil, nil, fmt.Errorf("auth: STS token exchange failed: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT acquired (sub=%s, act=%s)\n", jwt.Sub, jwt.Act.Sub)
-
-	return jwt, pkceResult, nil
 }

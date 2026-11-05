@@ -182,8 +182,6 @@ func createPkiIssuerHandler(ctx context.Context, req mcp.CallToolRequest, logger
 
 		certificateChainStr := certificateChain.String()
 
-		//certificateData := secret.Data["certificate"].(string)
-
 		signedData := map[string]interface{}{
 			"certificate": certificateData,
 		}

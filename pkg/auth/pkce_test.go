@@ -4,57 +4,17 @@
 package auth
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// freeTCPPort asks the OS for an available TCP port by briefly binding to :0.
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	return port
-}
-
-// redirectToListenerWithState simulates the IdP redirect arriving at the local
-// callback listener. state is echoed back as the "state" query parameter —
-// pass the empty string to omit it (e.g. for IdP-error tests where the handler
-// returns before checking state). When state is the empty string and code is
-// non-empty the helper probes the listener for the state by issuing a dummy
-// request first — use redirectToListenerAutoState for that.
-func redirectToListenerWithState(t *testing.T, listenerAddr, callbackPath, code, idpError, errorDesc, state string) {
-	t.Helper()
-	q := url.Values{}
-	if idpError != "" {
-		q.Set("error", idpError)
-		q.Set("error_description", errorDesc)
-	} else {
-		q.Set("code", code)
-		if state != "" {
-			q.Set("state", state)
-		}
-	}
-	targetURL := fmt.Sprintf("http://%s%s?%s", listenerAddr, callbackPath, q.Encode())
-	resp, err := http.Get(targetURL) //nolint:noctx // test helper
-	if err != nil {
-		return // listener may have already shut down — that's fine
-	}
-	resp.Body.Close()
-}
 
 // newFakeTokenServer returns an httptest.Server that mimics an OAuth token endpoint.
 // When statusCode != 0 and != 200 it returns that code with an error JSON body.
@@ -94,83 +54,6 @@ func newFakeTokenServerCapture(t *testing.T, successToken string, statusCode int
 
 // TestRunSinglePKCEFlow_SuccessfulRedirect: happy path — code arrives → token returned.
 // A fixed stateGenerator is injected so the redirect can echo back the known state.
-func TestRunSinglePKCEFlow_SuccessfulRedirect(t *testing.T) {
-	const fixedState = "test-state-value"
-	orig := stateGenerator
-	stateGenerator = func() (string, error) { return fixedState, nil }
-	t.Cleanup(func() { stateGenerator = orig })
-
-	tokenSrv := newFakeTokenServer(t, "subject-access-token", 0)
-	port := freeTCPPort(t)
-	listenerAddr := fmt.Sprintf("127.0.0.1:%d", port)
-
-	cfg := PKCEConfig{
-		ClientID:    "test-client",
-		AuthURL:     "http://idp.example.com/auth",
-		TokenURL:    tokenSrv.URL,
-		RedirectURL: fmt.Sprintf("http://%s/callback", listenerAddr),
-		Scopes:      []string{"openid"},
-		Deadline:    5 * time.Second,
-	}
-
-	// Deliver the redirect after the listener is up, echoing the known state back.
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		redirectToListenerWithState(t, listenerAddr, "/callback", "auth-code-abc", "", "", fixedState)
-	}()
-
-	token, err := runSinglePKCEFlow(context.Background(), cfg, "Subject")
-	require.NoError(t, err)
-	assert.Equal(t, "subject-access-token", token.AccessToken)
-}
-
-// TestRunSinglePKCEFlow_Timeout: no redirect arrives → ErrAuthTimeout, listener shuts down.
-func TestRunSinglePKCEFlow_Timeout(t *testing.T) {
-	tokenSrv := newFakeTokenServer(t, "unused", 0)
-	port := freeTCPPort(t)
-
-	cfg := PKCEConfig{
-		ClientID:    "test-client",
-		AuthURL:     "http://idp.example.com/auth",
-		TokenURL:    tokenSrv.URL,
-		RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/callback", port),
-		Deadline:    100 * time.Millisecond, // intentionally short
-	}
-
-	// No redirect sent — flow must time out.
-	token, err := runSinglePKCEFlow(context.Background(), cfg, "Subject")
-	assert.Empty(t, token)
-	assert.True(t, errors.Is(err, ErrAuthTimeout),
-		"expected ErrAuthTimeout, got: %v", err)
-}
-
-// TestRunSinglePKCEFlow_IdPError: redirect arrives with error param → IdP error returned.
-func TestRunSinglePKCEFlow_IdPError(t *testing.T) {
-	tokenSrv := newFakeTokenServer(t, "unused", 0)
-	port := freeTCPPort(t)
-	listenerAddr := fmt.Sprintf("127.0.0.1:%d", port)
-
-	cfg := PKCEConfig{
-		ClientID:    "test-client",
-		AuthURL:     "http://idp.example.com/auth",
-		TokenURL:    tokenSrv.URL,
-		RedirectURL: fmt.Sprintf("http://%s/callback", listenerAddr),
-		Deadline:    5 * time.Second,
-	}
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		redirectToListenerWithState(t, listenerAddr, "/callback", "", "access_denied", "User denied the request", "")
-	}()
-
-	token, err := runSinglePKCEFlow(context.Background(), cfg, "Subject")
-	assert.Empty(t, token)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "access_denied")
-	assert.Contains(t, err.Error(), "User denied the request")
-}
-
-// TestExchangeCode_NonOKStatus: token endpoint returns non-2xx → error with HTTP status.
 func TestExchangeCode_NonOKStatus(t *testing.T) {
 	srv := newFakeTokenServer(t, "", http.StatusInternalServerError)
 

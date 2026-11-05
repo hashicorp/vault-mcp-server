@@ -425,21 +425,12 @@ type mockClientSession struct {
 	id string
 }
 
-func (m *mockClientSession) Initialize()                                        {}
-func (m *mockClientSession) Initialized() bool                                  { return true }
-func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return make(chan mcp.JSONRPCNotification, 1) }
-func (m *mockClientSession) SessionID() string                                  { return m.id }
-
-// contextWithSession adds a mock session to the context using reflection to match
-// the internal context key used by mcp-go/server package
-func contextWithSession(ctx context.Context, session *mockClientSession) context.Context {
-	// The server package uses an unexported context key, so we need to use
-	// a workaround. We'll create a context that returns our session when
-	// server.ClientSessionFromContext is called.
-	// Since we can't access the internal key, we'll test the functions that
-	// don't require GetVaultClientFromContext or use CreateVaultClientForSession directly
-	return context.WithValue(ctx, contextKey("mcp.client.session"), session)
+func (m *mockClientSession) Initialize()       {}
+func (m *mockClientSession) Initialized() bool { return true }
+func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return make(chan mcp.JSONRPCNotification, 1)
 }
+func (m *mockClientSession) SessionID() string { return m.id }
 
 func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	logger := log.New()
@@ -482,8 +473,8 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "false")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
+			contextKey(VaultAddress):       "http://127.0.0.1:8200",
+			contextKey(VaultToken):         "test-token",
 			contextKey(VaultSkipTLSVerify): "true",
 		}
 		session := &mockClientSession{id: "test-ctx-true-env-false"}
@@ -497,8 +488,8 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
+			contextKey(VaultAddress):       "http://127.0.0.1:8200",
+			contextKey(VaultToken):         "test-token",
 			contextKey(VaultSkipTLSVerify): "false",
 		}
 		session := &mockClientSession{id: "test-ctx-false-env-true"}
@@ -528,8 +519,8 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
+			contextKey(VaultAddress):       "http://127.0.0.1:8200",
+			contextKey(VaultToken):         "test-token",
 			contextKey(VaultSkipTLSVerify): "not-a-bool",
 		}
 		session := &mockClientSession{id: "test-invalid-ctx"}
@@ -702,4 +693,3 @@ func TestGetVaultClientFromContext_ExpiredJWT_ReturnsError(t *testing.T) {
 		"isJWTExpired must return true for a past exp")
 	_ = ctx // context is set up correctly; the guard fires before the session lookup
 }
-
