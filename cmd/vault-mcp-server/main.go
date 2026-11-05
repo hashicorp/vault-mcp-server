@@ -321,7 +321,7 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 			if delegationJWT == nil {
 				if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" && !isLoginTool(req.Params.Name) {
 					logger.WithFields(log.Fields{"tool": req.Params.Name, "outcome": "denied", "reason": "not_authenticated"}).Warn("Vault operation blocked before reaching Vault")
-					return mcp.NewToolResultError("Not authenticated. Call vault_login_subject first, then sign in."), nil
+					return mcp.NewToolResultError("Not authenticated. Call vault_login."), nil
 				}
 				return next(ctx, req)
 			}
@@ -398,7 +398,7 @@ func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
 }
 
 func isLoginTool(name string) bool {
-	return name == "vault_login_subject" || name == "vault_login_actor" || name == "vault_auth_status"
+	return name == "vault_login" || name == "vault_auth_status"
 }
 
 // runDefaultCommand handles the default behavior when no subcommand is provided

@@ -88,8 +88,8 @@ type PKCEFlowResult struct {
 // StartPKCEFlow starts a single PKCE Authorization Code flow and returns the
 // authorization URL immediately. The caller must open (or display) the URL.
 // The token endpoint response is delivered asynchronously on the returned
-// channel (buffered 1). The callback listener is shut down when a result is
-// sent or when ctx is cancelled.
+// channel (buffered 1). The callback listener is shut down before a result is
+// sent, or when ctx is cancelled.
 func StartPKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (authURL string, result <-chan PKCEFlowResult, err error) {
 	deadline := cfg.Deadline
 	if deadline == 0 {
@@ -159,20 +159,24 @@ func StartPKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (authURL s
 	ch := make(chan PKCEFlowResult, 1)
 	go func() {
 		defer cancel()
-		defer srv.Shutdown(context.Background()) //nolint:errcheck
+		var res PKCEFlowResult
 		select {
 		case code := <-codeCh:
 			tok, err := exchangeCode(cfg, code, verifier, state)
-			ch <- PKCEFlowResult{Token: tok, Err: err}
+			res = PKCEFlowResult{Token: tok, Err: err}
 		case err := <-errCh:
-			ch <- PKCEFlowResult{Err: err}
+			res = PKCEFlowResult{Err: err}
 		case <-flowCtx.Done():
 			if errors.Is(flowCtx.Err(), context.DeadlineExceeded) {
-				ch <- PKCEFlowResult{Err: ErrAuthTimeout}
+				res = PKCEFlowResult{Err: ErrAuthTimeout}
 			} else {
-				ch <- PKCEFlowResult{Err: flowCtx.Err()}
+				res = PKCEFlowResult{Err: flowCtx.Err()}
 			}
 		}
+		// Release the callback port before delivering the result so the caller
+		// can immediately start another flow on the same port.
+		srv.Shutdown(context.Background()) //nolint:errcheck
+		ch <- res
 	}()
 
 	return buildAuthURL(cfg, challenge, state), ch, nil
