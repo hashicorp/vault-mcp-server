@@ -13,8 +13,10 @@ type AuthConfig struct {
 	// Corresponds to VAULT_MCP_AUTH_ENABLED=true.
 	Enabled bool
 
-	// Separate application credentials for each identity. An empty secret
-	// selects a public client; credentials are never shared between identities.
+	// Separate application credentials for each identity; they are never shared.
+	// The subject signs in through the browser (an empty secret selects a public
+	// client). The actor is a confidential client that authenticates with the
+	// client credentials grant, so ActorClientSecret is required.
 	SubjectClientID     string
 	SubjectClientSecret string
 	ActorClientID       string
@@ -27,12 +29,6 @@ type AuthConfig struct {
 	RedirectURL string
 	// Scopes is the list of OAuth scopes to request.
 	Scopes []string
-
-	// ActorUsername and ActorPassword, when both set, authenticate the agent
-	// (actor) non-interactively with the password grant instead of a browser.
-	// Corresponds to VAULT_MCP_ACTOR_USERNAME / VAULT_MCP_ACTOR_PASSWORD.
-	ActorUsername string
-	ActorPassword string
 
 	// RevokeURL is the IdP RFC 7009 revocation endpoint, called on session end.
 	// Corresponds to VAULT_MCP_REVOKE_URL. Empty disables revocation.

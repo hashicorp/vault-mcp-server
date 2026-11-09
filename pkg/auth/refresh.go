@@ -22,9 +22,11 @@ const (
 
 // TokenSource holds the current Delegation JWT and renews it in the background
 // before it expires by re-running the STS token exchange for the same identity
-// (no new browser login). The Subject and Actor access tokens are renewed via
-// their refresh tokens when the IdP issued them; otherwise the cached access
-// tokens are reused until they expire. All tokens are kept in memory only.
+// (no new browser login). The Subject access token is renewed via its refresh
+// token when the IdP issued one; otherwise the cached access token is reused
+// until it expires. The Actor is an OAuth client, so a fresh Actor token is
+// obtained with the client credentials grant at every renewal. All tokens are
+// kept in memory only.
 //
 // A nil *TokenSource is valid: Get returns nil, which keeps the VAULT_TOKEN
 // fallback path (auth disabled) working unchanged.
@@ -36,11 +38,12 @@ type TokenSource struct {
 	mu                  sync.RWMutex
 	jwt                 *DelegationJWT
 	subjectToken        string
-	actorToken          string
 	subjectRefreshToken string
-	actorRefreshToken   string
-	closed              bool
-	cancel              context.CancelFunc
+	// actorToken is the most recent Actor access token. The Actor has no
+	// refresh token (client credentials grant); it is kept only to revoke it.
+	actorToken string
+	closed     bool
+	cancel     context.CancelFunc
 
 	// onRefresh, when set, is called with each newly issued JWT.
 	onRefresh     func(*DelegationJWT)
@@ -55,7 +58,7 @@ func (s *TokenSource) OnInvalidated(fn func()) {
 }
 
 // NewTokenSource returns a TokenSource seeded with the initial JWT and the
-// refresh tokens captured during the PKCE flows.
+// Subject tokens captured during the PKCE flow.
 func NewTokenSource(cfg AuthConfig, jwt *DelegationJWT, pkce *PKCEResult) *TokenSource {
 	s := &TokenSource{
 		cfg:      cfg,
@@ -64,9 +67,8 @@ func NewTokenSource(cfg AuthConfig, jwt *DelegationJWT, pkce *PKCEResult) *Token
 	}
 	if pkce != nil {
 		s.subjectToken = pkce.SubjectToken
-		s.actorToken = pkce.ActorToken
 		s.subjectRefreshToken = pkce.SubjectRefreshToken
-		s.actorRefreshToken = pkce.ActorRefreshToken
+		s.actorToken = pkce.ActorToken
 	}
 	return s
 }
@@ -92,43 +94,66 @@ const revokeTimeout = 5 * time.Second
 // ErrRevokeNotConfigured is returned by Revoke when no revocation URL is set.
 var ErrRevokeNotConfigured = errors.New("revocation URL not configured")
 
-// Revoke asks the IdP to revoke the Subject and Actor refresh tokens (RFC 7009).
-// It is best effort: errors are returned for logging, never contain token
-// values, and the caller must still call Close.
+// Revoke asks the IdP to revoke the Subject refresh token and the latest Actor
+// access token (RFC 7009), in parallel. The Actor has no refresh token. Each
+// token is revoked as its own application. It is best effort: both revocations
+// are always attempted, errors are returned for logging and never contain
+// token values, and the caller must still call Close.
 func (s *TokenSource) Revoke() error {
 	if s == nil || s.cfg.RevokeURL == "" {
 		return ErrRevokeNotConfigured
 	}
 	s.mu.RLock()
-	subjectRT, actorRT := s.subjectRefreshToken, s.actorRefreshToken
+	subjectRT, actorAT := s.subjectRefreshToken, s.actorToken
 	s.mu.RUnlock()
 
+	var subjectErr, actorErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		subjectErr = s.revokeToken(subjectRT, "refresh_token", s.cfg.SubjectPKCEConfig(), false)
+	}()
+	go func() {
+		defer wg.Done()
+		actorErr = s.revokeToken(actorAT, "access_token", s.cfg.ActorPKCEConfig(), true)
+	}()
+	wg.Wait()
+
 	var errs []error
-	if err := s.revokeToken(subjectRT, s.cfg.SubjectPKCEConfig()); err != nil {
-		errs = append(errs, fmt.Errorf("subject: %w", err))
+	if subjectErr != nil {
+		errs = append(errs, fmt.Errorf("subject refresh token: %w", subjectErr))
 	}
-	if err := s.revokeToken(actorRT, s.cfg.ActorPKCEConfig()); err != nil {
-		errs = append(errs, fmt.Errorf("actor: %w", err))
+	if actorErr != nil {
+		errs = append(errs, fmt.Errorf("actor access token: %w", actorErr))
 	}
 	return errors.Join(errs...)
 }
 
-func (s *TokenSource) revokeToken(refreshToken string, cfg PKCEConfig) error {
-	if refreshToken == "" {
+// revokeToken posts an RFC 7009 revocation. With secretInBody the client
+// authenticates with client_secret_post (as the Actor does at the token
+// endpoint); otherwise a confidential client uses client_secret_basic and a
+// public client sends only client_id.
+func (s *TokenSource) revokeToken(token, hint string, cfg PKCEConfig, secretInBody bool) error {
+	if token == "" {
 		return nil
 	}
 	form := url.Values{}
-	form.Set("token", refreshToken)
-	form.Set("token_type_hint", "refresh_token")
-	if cfg.ClientSecret == "" {
+	form.Set("token", token)
+	form.Set("token_type_hint", hint)
+	basic := cfg.ClientSecret != "" && !secretInBody
+	if !basic {
 		form.Set("client_id", cfg.ClientID)
+		if secretInBody && cfg.ClientSecret != "" {
+			form.Set("client_secret", cfg.ClientSecret)
+		}
 	}
 	req, err := http.NewRequest(http.MethodPost, s.cfg.RevokeURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return errors.New("building revoke request")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if cfg.ClientSecret != "" {
+	if basic {
 		req.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
 	}
 	resp, err := (&http.Client{Timeout: revokeTimeout}).Do(req)
@@ -156,17 +181,16 @@ func (s *TokenSource) Close() {
 		s.cancel = nil
 	}
 	s.jwt = nil
-	s.subjectToken, s.actorToken = "", ""
-	s.subjectRefreshToken, s.actorRefreshToken = "", ""
+	s.subjectToken, s.subjectRefreshToken, s.actorToken = "", "", ""
 	s.onRefresh = nil
 	s.onInvalidated = nil
 }
 
-// HasRefreshTokens reports whether the IdP issued refresh tokens for both identities.
-func (s *TokenSource) HasRefreshTokens() bool {
+// HasRefreshToken reports whether the IdP issued a refresh token for the Subject.
+func (s *TokenSource) HasRefreshToken() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.subjectRefreshToken != "" && s.actorRefreshToken != ""
+	return s.subjectRefreshToken != ""
 }
 
 // Start runs the background refresh loop until ctx is cancelled. It returns
@@ -180,17 +204,17 @@ func (s *TokenSource) Start(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	haveTokens := s.subjectToken != "" && s.actorToken != ""
+	haveTokens := s.subjectToken != ""
 	if haveTokens {
 		ctx, s.cancel = context.WithCancel(ctx)
 	}
 	s.mu.Unlock()
 	if !haveTokens {
-		fmt.Fprintf(os.Stderr, "[vault-mcp-server] No Subject/Actor tokens available; the Delegation JWT will not be renewed automatically\n")
+		fmt.Fprintf(os.Stderr, "[vault-mcp-server] No Subject token available; the Delegation JWT will not be renewed automatically\n")
 		return
 	}
-	if !s.HasRefreshTokens() {
-		fmt.Fprintf(os.Stderr, "[vault-mcp-server] No refresh tokens issued by the IdP; the Delegation JWT will be renewed with the cached Subject/Actor access tokens until they expire\n")
+	if !s.HasRefreshToken() {
+		fmt.Fprintf(os.Stderr, "[vault-mcp-server] No Subject refresh token issued by the IdP; the Delegation JWT will be renewed with the cached Subject access token until it expires\n")
 	}
 
 	go func() {
@@ -223,14 +247,15 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 		return nil
 	}
 
-	subjectToken, err := s.accessToken(&s.subjectToken, &s.subjectRefreshToken, s.cfg.SubjectPKCEConfig())
+	subjectToken, err := s.subjectAccessToken()
 	if err != nil {
 		return fmt.Errorf("renewing Subject token: %w", err)
 	}
-	actorToken, err := s.accessToken(&s.actorToken, &s.actorRefreshToken, s.cfg.ActorPKCEConfig())
-	if err != nil {
-		return fmt.Errorf("renewing Actor token: %w", err)
+	actor := ClientCredentialsGrant(s.cfg.ActorPKCEConfig())
+	if actor.Err != nil {
+		return fmt.Errorf("renewing Actor token: %w", actor.Err)
 	}
+	actorToken := actor.Token.AccessToken
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -246,6 +271,7 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 		return context.Canceled
 	}
 	s.jwt = jwt
+	s.actorToken = actorToken
 	onRefresh := s.onRefresh
 	s.mu.Unlock()
 
@@ -256,22 +282,23 @@ func (s *TokenSource) refreshIfNeeded(ctx context.Context) error {
 	return nil
 }
 
-// accessToken returns the access token to use for the STS exchange. With a refresh
-// token it fetches (and caches) a new access token, applying any rotated refresh
-// token immediately so a later failure in the same cycle does not lose it.
-// Without one it returns the cached access token.
-func (s *TokenSource) accessToken(token, refreshToken *string, cfg PKCEConfig) (string, error) {
+// subjectAccessToken returns the Subject access token to use for the STS exchange.
+// With a refresh token it fetches (and caches) a new access token, applying any
+// rotated refresh token immediately so a later failure in the same cycle does not
+// lose it. Without one it returns the cached access token.
+func (s *TokenSource) subjectAccessToken() (string, error) {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
 		return "", context.Canceled
 	}
-	cached, rt := *token, *refreshToken
+	cached, rt := s.subjectToken, s.subjectRefreshToken
 	s.mu.RUnlock()
 	if rt == "" {
 		return cached, nil
 	}
 
+	cfg := s.cfg.SubjectPKCEConfig()
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", rt)
@@ -296,9 +323,9 @@ func (s *TokenSource) accessToken(token, refreshToken *string, cfg PKCEConfig) (
 		s.mu.Unlock()
 		return "", context.Canceled
 	}
-	*token = tok.AccessToken
+	s.subjectToken = tok.AccessToken
 	if tok.RefreshToken != "" {
-		*refreshToken = tok.RefreshToken
+		s.subjectRefreshToken = tok.RefreshToken
 	}
 	s.mu.Unlock()
 	return tok.AccessToken, nil

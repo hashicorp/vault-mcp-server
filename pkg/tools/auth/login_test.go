@@ -38,16 +38,43 @@ func testJWT(t *testing.T) string {
 	return enc.EncodeToString([]byte(`{"alg":"none"}`)) + "." + enc.EncodeToString(payload) + ".sig"
 }
 
-func newLoginFixture(t *testing.T, actorPassword bool) (*LoginState, *int) {
-	t.Helper()
+type loginFixture struct {
+	state  *LoginState
+	ready  int
+	grants chan string
+	// actorStatus lets a test make the IdP reject the actor client.
+	actorStatus int
+}
 
-	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"access_token":"at","refresh_token":"rt"}`)
+func newLoginFixture(t *testing.T) *loginFixture {
+	t.Helper()
+	f := &loginFixture{grants: make(chan string, 10), actorStatus: http.StatusOK}
+
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		grant := r.PostForm.Get("grant_type")
+		f.grants <- grant
+		if grant == "client_credentials" {
+			_, _, basic := r.BasicAuth()
+			assert.False(t, basic)
+			assert.Equal(t, "actor-app", r.PostForm.Get("client_id"))
+			assert.Equal(t, "actor-secret", r.PostForm.Get("client_secret"))
+			if f.actorStatus != http.StatusOK {
+				http.Error(w, `{"error":"invalid_client"}`, f.actorStatus)
+				return
+			}
+			fmt.Fprint(w, `{"access_token":"actor-at"}`)
+			return
+		}
+		fmt.Fprint(w, `{"access_token":"subject-at","refresh_token":"rt"}`)
 	}))
 	t.Cleanup(idp.Close)
 
 	jwt := testJWT(t)
-	sts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	sts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		assert.Equal(t, "subject-at", r.PostForm.Get("subject_token"))
+		assert.Equal(t, "actor-at", r.PostForm.Get("actor_token"))
 		fmt.Fprintf(w, `{"access_token":%q}`, jwt)
 	}))
 	t.Cleanup(sts.Close)
@@ -58,25 +85,22 @@ func newLoginFixture(t *testing.T, actorPassword bool) (*LoginState, *int) {
 	require.NoError(t, ln.Close())
 
 	cfg := auth.AuthConfig{
-		Enabled:         true,
-		SubjectClientID: "subject-app",
-		ActorClientID:   "actor-app",
-		AuthURL:         "https://idp.example/authorize",
-		TokenURL:        idp.URL,
-		RedirectURL:     fmt.Sprintf("http://127.0.0.1:%d/callback", port),
-		STSEndpoint:     sts.URL,
-		Deadline:        time.Minute,
-	}
-	if actorPassword {
-		cfg.ActorUsername, cfg.ActorPassword = "agent", "secret"
+		Enabled:           true,
+		SubjectClientID:   "subject-app",
+		ActorClientID:     "actor-app",
+		ActorClientSecret: "actor-secret",
+		AuthURL:           "https://idp.example/authorize",
+		TokenURL:          idp.URL,
+		RedirectURL:       fmt.Sprintf("http://127.0.0.1:%d/callback", port),
+		STSEndpoint:       sts.URL,
+		Deadline:          time.Minute,
 	}
 
-	ready := new(int)
 	logger := log.New()
 	logger.SetLevel(log.PanicLevel)
-	s := &LoginState{cfg: cfg, logger: logger, onReady: func(*auth.TokenSource) { *ready++ }}
-	t.Cleanup(s.Close)
-	return s, ready
+	f.state = &LoginState{cfg: cfg, logger: logger, onReady: func(*auth.TokenSource) { f.ready++ }}
+	t.Cleanup(f.state.Close)
+	return f
 }
 
 // signIn plays the browser: it follows the sign-in URL found in text back to
@@ -109,8 +133,9 @@ func waitStatus(t *testing.T, s *LoginState, substr string) {
 	require.Eventually(t, func() bool { return strings.Contains(s.status(), substr) }, 5*time.Second, 10*time.Millisecond, "status: %s", s.status())
 }
 
-func TestLogin_BrowserActorFlow(t *testing.T) {
-	s, ready := newLoginFixture(t, false)
+func TestLogin_SubjectBrowserThenActorClientCredentials(t *testing.T) {
+	f := newLoginFixture(t)
+	s := f.state
 
 	assert.Contains(t, s.status(), "Not authenticated")
 
@@ -119,37 +144,50 @@ func TestLogin_BrowserActorFlow(t *testing.T) {
 	assert.Equal(t, urlPattern.FindString(first), urlPattern.FindString(loginText(t, s)), "mid-flow login returns the same URL")
 
 	signIn(t, first, "")
-	waitStatus(t, s, "sign in as the agent")
-
-	actor := loginText(t, s)
-	assert.Contains(t, actor, "agent")
-	assert.NotEqual(t, urlPattern.FindString(first), urlPattern.FindString(actor))
-
-	signIn(t, actor, "")
 	waitStatus(t, s, "Authenticated. sub=user@example.com")
-	assert.Equal(t, 1, *ready)
+	assert.Equal(t, 1, f.ready)
 	assert.Contains(t, loginText(t, s), "Already authenticated")
+
+	// The subject uses the authorization code grant; the actor never opens a browser.
+	assert.Equal(t, []string{"authorization_code", "client_credentials"}, []string{<-f.grants, <-f.grants})
 }
 
-func TestLogin_ActorPasswordFlow(t *testing.T) {
-	s, ready := newLoginFixture(t, true)
+func TestLogin_RequiresActorClientCredentials(t *testing.T) {
+	for name, mutate := range map[string]func(*auth.AuthConfig){
+		"no id":     func(c *auth.AuthConfig) { c.ActorClientID = "" },
+		"no secret": func(c *auth.AuthConfig) { c.ActorClientSecret = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLoginFixture(t)
+			mutate(&f.state.cfg)
 
-	text := loginText(t, s)
-	assert.Contains(t, text, "agent is signed in automatically")
+			_, err := f.state.login()
 
-	signIn(t, text, "")
-	waitStatus(t, s, "Authenticated. sub=user@example.com")
-	assert.Equal(t, 1, *ready)
+			require.ErrorIs(t, err, auth.ErrActorCredentialsMissing)
+			assert.Contains(t, f.state.status(), "Not authenticated")
+		})
+	}
 }
 
-func TestLogin_FailureReturnsToLoggedOut(t *testing.T) {
-	s, ready := newLoginFixture(t, false)
+func TestLogin_SubjectFailureReturnsToLoggedOut(t *testing.T) {
+	f := newLoginFixture(t)
+	s := f.state
 
 	signIn(t, loginText(t, s), "access_denied")
 	waitStatus(t, s, "last sign-in failed: human sign-in failed")
-	assert.Zero(t, *ready)
+	assert.Zero(t, f.ready)
 
 	// A new attempt is possible after a failure.
 	assert.Contains(t, loginText(t, s), "human user")
 	assert.NotContains(t, s.status(), "failed")
+}
+
+func TestLogin_ActorFailureReturnsToLoggedOut(t *testing.T) {
+	f := newLoginFixture(t)
+	f.actorStatus = http.StatusUnauthorized
+	s := f.state
+
+	signIn(t, loginText(t, s), "")
+	waitStatus(t, s, "last sign-in failed: agent sign-in failed")
+	assert.Zero(t, f.ready)
 }

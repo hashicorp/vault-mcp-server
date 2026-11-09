@@ -22,7 +22,6 @@ type loginPhase int
 const (
 	phaseLoggedOut loginPhase = iota
 	phaseSubjectPending
-	phaseActorPending
 	phaseCompleting
 	phaseAuthenticated
 	phaseReauthRequired
@@ -111,10 +110,6 @@ type ToolDef struct {
 	Handler server.ToolHandlerFunc
 }
 
-func (s *LoginState) actorPasswordConfigured() bool {
-	return s.cfg.ActorUsername != "" && s.cfg.ActorPassword != ""
-}
-
 func (s *LoginState) loginTool() *ToolDef {
 	t := mcp.NewTool("vault_login",
 		mcp.WithDescription("Sign in to Vault. Returns the sign-in URL for the current step; open it in your browser. Safe to call repeatedly: mid-flow it returns the current URL, and when already signed in it says so."),
@@ -134,8 +129,11 @@ func (s *LoginState) login() (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("Sign-in is finishing. Call vault_auth_status to confirm."), nil
 	case phaseSubjectPending:
 		return mcp.NewToolResultText(s.subjectPrompt("Waiting for the human sign-in. ")), nil
-	case phaseActorPending:
-		return mcp.NewToolResultText(s.actorPrompt()), nil
+	}
+
+	// Fail before opening a browser if the agent could not sign in afterwards.
+	if s.cfg.ActorClientID == "" || s.cfg.ActorClientSecret == "" {
+		return nil, auth.ErrActorCredentialsMissing
 	}
 
 	flowCtx, cancel := context.WithCancel(context.Background())
@@ -153,15 +151,7 @@ func (s *LoginState) login() (*mcp.CallToolResult, error) {
 }
 
 func (s *LoginState) subjectPrompt(prefix string) string {
-	next := "After you sign in, a second sign-in URL for the agent appears. Call vault_login again to get it."
-	if s.actorPasswordConfigured() {
-		next = "After you sign in, the agent is signed in automatically. Call vault_auth_status to confirm."
-	}
-	return fmt.Sprintf("%sOpen this URL in your browser to sign in as the human user:\n\n%s\n\n%s", prefix, s.pendingURL, next)
-}
-
-func (s *LoginState) actorPrompt() string {
-	return fmt.Sprintf("Human sign-in complete. Open this URL in your browser to sign in as the agent:\n\n%s\n\nAfter signing in, call vault_auth_status to confirm.", s.pendingURL)
+	return fmt.Sprintf("%sOpen this URL in your browser to sign in as the human user:\n\n%s\n\nAfter you sign in, the agent is signed in automatically. Call vault_auth_status to confirm.", prefix, s.pendingURL)
 }
 
 func (s *LoginState) authStatusTool() *ToolDef {
@@ -186,8 +176,6 @@ func (s *LoginState) status() string {
 		return "Sign-in is finishing."
 	case phaseSubjectPending:
 		return "Waiting for the human sign-in. Call vault_login for the URL."
-	case phaseActorPending:
-		return s.actorPrompt()
 	case phaseReauthRequired:
 		return "Re-authentication required. Call vault_login."
 	}
@@ -198,8 +186,8 @@ func (s *LoginState) status() string {
 }
 
 // waitForSubject continues the flow once the human sign-in finishes: the agent
-// signs in with the password grant when configured, otherwise a second browser
-// flow starts automatically.
+// signs in as an OAuth client (client credentials grant), then the STS exchange
+// runs.
 func (s *LoginState) waitForSubject(gen uint64, ch <-chan auth.PKCEFlowResult) {
 	subject := <-ch
 	s.mu.Lock()
@@ -212,30 +200,11 @@ func (s *LoginState) waitForSubject(gen uint64, ch <-chan auth.PKCEFlowResult) {
 		s.mu.Unlock()
 		return
 	}
-
-	if s.actorPasswordConfigured() {
-		s.phase = phaseCompleting
-		s.pendingURL = ""
-		s.mu.Unlock()
-		actor := auth.PasswordGrant(s.cfg.ActorPKCEConfig(), s.cfg.ActorUsername, s.cfg.ActorPassword)
-		s.complete(gen, subject, actor)
-		return
-	}
-
-	flowCtx, cancel := context.WithCancel(context.Background())
-	pkceURL, actorCh, err := auth.StartPKCEFlow(flowCtx, s.cfg.ActorPKCEConfig(), "Actor")
-	if err != nil {
-		cancel()
-		s.failLocked("starting agent sign-in failed", err)
-		s.mu.Unlock()
-		return
-	}
-	s.cancels = append(s.cancels, cancel)
-	s.pendingURL = pkceURL
-	s.phase = phaseActorPending
+	s.phase = phaseCompleting
+	s.pendingURL = ""
 	s.mu.Unlock()
 
-	actor := <-actorCh
+	actor := auth.ClientCredentialsGrant(s.cfg.ActorPKCEConfig())
 	s.complete(gen, subject, actor)
 }
 
@@ -252,15 +221,12 @@ func (s *LoginState) complete(gen uint64, subject, actor auth.PKCEFlowResult) {
 		s.mu.Unlock()
 		return
 	}
-	s.phase = phaseCompleting
-	s.pendingURL = ""
 	s.mu.Unlock()
 
 	pkceResult := &auth.PKCEResult{
 		SubjectToken:        subject.Token.AccessToken,
 		SubjectRefreshToken: subject.Token.RefreshToken,
 		ActorToken:          actor.Token.AccessToken,
-		ActorRefreshToken:   actor.Token.RefreshToken,
 	}
 	jwt, err := auth.ExchangeTokens(
 		pkceResult.SubjectToken, pkceResult.ActorToken,

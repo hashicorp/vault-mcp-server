@@ -62,13 +62,11 @@ type PKCEConfig struct {
 type PKCEResult struct {
 	// SubjectToken is the raw access token for the human user (Subject flow).
 	SubjectToken string
-	// ActorToken is the raw access token for the MCP Server (Actor flow).
+	// ActorToken is the raw access token for the MCP Server (client credentials grant).
 	ActorToken string
-	// SubjectRefreshToken and ActorRefreshToken are set only when the IdP issued
-	// a refresh_token; they allow the delegation JWT to be renewed without a new
-	// browser login.
+	// SubjectRefreshToken is set only when the IdP issued a refresh_token; it
+	// allows the delegation JWT to be renewed without a new browser login.
 	SubjectRefreshToken string
-	ActorRefreshToken   string
 }
 
 // tokenResponse is the minimal subset of the OAuth token endpoint JSON response.

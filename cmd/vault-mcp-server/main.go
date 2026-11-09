@@ -266,8 +266,6 @@ func authConfigFromEnv() auth.AuthConfig {
 		TokenURL:                os.Getenv("VAULT_MCP_TOKEN_URL"),
 		RedirectURL:             os.Getenv("VAULT_MCP_REDIRECT_URL"),
 		RevokeURL:               os.Getenv("VAULT_MCP_REVOKE_URL"),
-		ActorUsername:           os.Getenv("VAULT_MCP_ACTOR_USERNAME"),
-		ActorPassword:           os.Getenv("VAULT_MCP_ACTOR_PASSWORD"),
 		STSEndpoint:             os.Getenv("VAULT_MCP_STS_ENDPOINT"),
 		STSClientID:             os.Getenv("VAULT_MCP_STS_CLIENT_ID"),
 		STSClientSecret:         os.Getenv("VAULT_MCP_STS_CLIENT_SECRET"),
@@ -383,11 +381,11 @@ func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
 		if ts != nil {
 			switch err := ts.Revoke(); {
 			case errors.Is(err, auth.ErrRevokeNotConfigured):
-				logger.Warn("VAULT_MCP_REVOKE_URL not set; refresh tokens not revoked at IdP")
+				logger.Warn("VAULT_MCP_REVOKE_URL not set; tokens not revoked at IdP")
 			case err != nil:
 				logger.WithError(err).Warn("Token revocation at IdP failed; discarding credentials anyway")
 			default:
-				logger.Info("Refresh tokens revoked at IdP")
+				logger.Info("Subject refresh token and actor access token revoked at IdP")
 			}
 		}
 		closeLogin()
