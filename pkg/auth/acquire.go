@@ -8,13 +8,14 @@ import (
 	"time"
 )
 
-// AuthConfig holds the configuration for the OBO delegation pipeline.
-// When Enabled is false, AcquireTokens is a no-op and the server falls back
-// to the VAULT_TOKEN environment variable path.
+// AuthConfig holds provider selection and the IBM Verify configuration.
+// Other IdPs can define their own configuration and TokenAcquirer implementation.
 type AuthConfig struct {
 	// Enabled activates the OBO pipeline when true.
 	// Corresponds to VAULT_MCP_AUTH_ENABLED=true.
 	Enabled bool
+	// IdP selects the factory implementation. Empty defaults to ibm-verify.
+	IdP string
 
 	// Separate application credentials for each identity. An empty secret
 	// selects a public client; credentials are never shared between identities.

@@ -3,10 +3,15 @@ package auth
 import "context"
 
 type IBMVerifySTS struct {
-	// Add any necessary fields for the IBM Verify STS implementation.
+	Config  AuthConfig
+	Subject Token
+	Actor   Token
 }
 
-func (s *IBMVerifySTS) TokenExchange(ctx context.Context, subject, actor Token) (*DelegationJWT, error) {
-	// To Do: Implement the logic to exchange tokens and return a DelegationJWT.
-	return nil, nil
+var _ TokenExchanger = (*IBMVerifySTS)(nil)
+
+func (s *IBMVerifySTS) Exchange(ctx context.Context) (*DelegationJWT, error) {
+	return exchangeTokens(ctx, s.Subject.AccessToken, s.Actor.AccessToken,
+		s.Config.STSEndpoint, s.Config.STSClientID, s.Config.STSClientSecret,
+		s.Config.STSAuthorizationDetails)
 }

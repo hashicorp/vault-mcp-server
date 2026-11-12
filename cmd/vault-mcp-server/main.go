@@ -133,7 +133,8 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	tools.InitTools(hcServer, logger)
 
 	if cfg.Enabled {
-		tools.InitLoginTools(hcServer, cfg, store, logger)
+		closeLogin := tools.InitLoginTools(hcServer, cfg, store, logger)
+		defer closeLogin()
 	}
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
@@ -204,12 +205,16 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	})
 
 	addr := fmt.Sprintf("%s:%s", host, port)
+	writeTimeout := 30 * time.Second
+	if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" {
+		writeTimeout = 7 * time.Minute
+	}
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Minute, // Set to 60 minutes to support long-lived connections
 	}
 
@@ -251,9 +256,11 @@ func authConfigFromEnv() auth.AuthConfig {
 	enabled := os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true"
 	return auth.AuthConfig{
 		Enabled:                 enabled,
+		IdP:                     os.Getenv("VAULT_MCP_IDP"),
 		AuthURL:                 os.Getenv("VAULT_MCP_AUTH_URL"),
 		TokenURL:                os.Getenv("VAULT_MCP_TOKEN_URL"),
 		RedirectURL:             os.Getenv("VAULT_MCP_REDIRECT_URL"),
+		Scopes:                  strings.Fields(os.Getenv("VAULT_MCP_SCOPES")),
 		SubjectClientID:         os.Getenv("VAULT_MCP_SUBJECT_CLIENT_ID"),
 		SubjectClientSecret:     os.Getenv("VAULT_MCP_SUBJECT_CLIENT_SECRET"),
 		ActorClientID:           os.Getenv("VAULT_MCP_ACTOR_CLIENT_ID"),
@@ -284,7 +291,8 @@ func runStdioServer(logger *log.Logger) error {
 	tools.InitTools(hcServer, logger)
 
 	if cfg.Enabled {
-		tools.InitLoginTools(hcServer, cfg, store, logger)
+		closeLogin := tools.InitLoginTools(hcServer, cfg, store, logger)
+		defer closeLogin()
 	}
 
 	return serverInit(ctx, hcServer, logger)
@@ -297,10 +305,10 @@ func NewServer(version string, logger *log.Logger, store *auth.TokenStore, opts 
 
 	// jwtMiddleware stamps the DelegationJWT into every tool-handler context so
 	// that GetVaultClientFromContext can authenticate to Vault using the JWT.
-	// When delegationJWT is nil (HTTP path / auth disabled), this is a no-op.
+	// A nil store preserves the legacy VAULT_TOKEN path.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if store != nil && req.Params.Name != "vault_login_subject" {
+			if store != nil && req.Params.Name != "vault_login_subject" && req.Params.Name != "vault_auth_status" {
 				session := server.ClientSessionFromContext(ctx)
 				if session == nil {
 					return mcp.NewToolResultError("No active MCP session."), nil

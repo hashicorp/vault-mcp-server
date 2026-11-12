@@ -67,7 +67,7 @@ and other MCP clients.
 The server can be configured using environment variables:
 
 - `VAULT_ADDR`: Vault server address (default: `http://127.0.0.1:8200`)
-- `VAULT_TOKEN`: Vault authentication token (required)
+- `VAULT_TOKEN`: Vault authentication token (required when delegated authentication is disabled)
 - `VAULT_NAMESPACE`: Vault namespace (optional)
 - `TRANSPORT_MODE`: Set to `http` to enable HTTP mode
 - `TRANSPORT_HOST`: Host to bind to for HTTP mode (default: `127.0.0.1`)
@@ -79,6 +79,58 @@ The server can be configured using environment variables:
 - `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
 - `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
+
+### Delegated authentication
+
+Set `VAULT_MCP_AUTH_ENABLED=true` and invoke `vault_login_subject` from the MCP
+client. Startup loads configuration only; authentication runs on demand.
+`VAULT_MCP_IDP` selects the provider (currently `ibm-verify`, also the default).
+
+IBM Verify requires:
+
+- `VAULT_MCP_AUTH_URL`, `VAULT_MCP_TOKEN_URL`, and `VAULT_MCP_REDIRECT_URL`.
+- `VAULT_MCP_SUBJECT_CLIENT_ID` and, for confidential clients,
+  `VAULT_MCP_SUBJECT_CLIENT_SECRET`.
+- `VAULT_MCP_ACTOR_CLIENT_ID`, `VAULT_MCP_ACTOR_CLIENT_SECRET` when required,
+  `VAULT_MCP_ACTOR_USERNAME`, and `VAULT_MCP_ACTOR_PASSWORD`.
+- `VAULT_MCP_STS_ENDPOINT`, `VAULT_MCP_STS_CLIENT_ID`, and
+  `VAULT_MCP_STS_CLIENT_SECRET` when required.
+- Optional `VAULT_MCP_STS_AUTHORIZATION_DETAILS`: an RFC 9396 JSON array.
+- Optional `VAULT_MCP_SCOPES`: space-separated OAuth scopes.
+
+The IBM Verify subject uses browser PKCE; the actor uses the password grant.
+The password grant is a legacy PoC mechanism and must be enabled in the actor
+application. STS client authentication uses HTTP Basic when a secret is supplied.
+Private-key client assertions are not implemented in this modular flow.
+The signed delegation JWT must contain `sub`, `act.sub`, and a future `exp`;
+Vault remains responsible for signature verification and authorization.
+
+The login tool uses the optional IdP-neutral
+`InteractiveTokenAcquirer.StartLogin(ctx)` contract to return a sign-in URL
+without waiting for the user. `TokenAcquirer.AcquireTokens(ctx)` remains available
+for synchronous callers. Interactive providers expose
+`InteractiveIdentityProvider.StartSubjectLogin(ctx)`. Each acquirer
+owns its provider configuration and orchestrates an `IdentityProvider` and
+`TokenExchanger.Exchange(ctx)`. The IBM Verify acquirer
+constructs a fresh exchanger with the current subject and actor tokens for each
+exchange, rather than mutating a shared exchanger. New IdPs implement these
+contracts and add a configuration/factory case; they need not use PKCE or the
+password grant.
+
+The existing in-memory JWT store and MCP session lookup are preserved so
+authenticated Vault calls continue to work. Expired JWTs are blocked; call
+`vault_login_subject` again to authenticate. Automatic refresh and additional
+session-lifecycle management are deferred. Subject and actor tokens are local to
+acquisition; only the final delegation JWT is retained. No tokens are written to
+files, environment variables, logs, or tool results.
+
+Use a local, single-user deployment for browser authentication: the browser
+and callback listener run on the server machine. `vault_login_subject` returns
+the sign-in URL immediately. After browser sign-in, actor authentication and STS
+exchange complete in the background; call `vault_auth_status` to confirm success
+or failure. Login has a bounded deadline and is cancelled on MCP session
+termination or server shutdown. Repeated calls while login is pending return the
+existing URL instead of starting another flow. No refresh loop is involved.
 
 ## HTTP Mode Configuration
 

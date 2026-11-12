@@ -10,14 +10,25 @@ type IBMVerifyProvider struct {
 	Config     AuthConfig
 }
 
-func (p *IBMVerifyProvider) AuthenticateSubject(ctx context.Context) (*Token, error) {
-	subjectToken, err := runSinglePKCEFlow(ctx, p.PKCEConfig, "Subject")
-	if err != nil {
-		return nil, fmt.Errorf("IBM Verify subject login: %w", err)
-	}
-	return &Token{AccessToken: subjectToken}, nil
+var _ IdentityProvider = (*IBMVerifyProvider)(nil)
+var _ InteractiveIdentityProvider = (*IBMVerifyProvider)(nil)
+
+func (p *IBMVerifyProvider) StartSubjectLogin(ctx context.Context) (string, <-chan SubjectLoginResult, error) {
+	return startPKCETokenFlow(ctx, p.PKCEConfig, "Subject")
 }
 
-func (p *IBMVerifyProvider) AuthenticateActor(ctx context.Context) (*Token, error) {
-	return PasswordGrant(ctx, p.Config)
+func (p *IBMVerifyProvider) AuthenticateSubject(ctx context.Context) (Token, error) {
+	subjectToken, err := runSinglePKCETokenFlow(ctx, p.PKCEConfig, "Subject")
+	if err != nil {
+		return Token{}, fmt.Errorf("IBM Verify subject login: %w", err)
+	}
+	return *subjectToken, nil
+}
+
+func (p *IBMVerifyProvider) AuthenticateActor(ctx context.Context) (Token, error) {
+	token, err := PasswordGrant(ctx, p.Config)
+	if err != nil {
+		return Token{}, err
+	}
+	return *token, nil
 }

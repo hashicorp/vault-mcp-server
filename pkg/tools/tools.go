@@ -13,14 +13,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// InitLoginTools registers the vault_login_subject.
+// InitLoginTools registers login and status tools and returns shutdown cleanup.
 func InitLoginTools(
 	hcServer *server.MCPServer,
 	cfg auth.AuthConfig,
 	store *auth.TokenStore,
 	logger *log.Logger,
-) {
-	toolauth.RegisterLogin(hcServer, cfg, store, logger)
+) func() {
+	return toolauth.RegisterLogin(hcServer, cfg, store, logger)
 }
 
 func InitTools(hcServer *server.MCPServer, logger *log.Logger) {

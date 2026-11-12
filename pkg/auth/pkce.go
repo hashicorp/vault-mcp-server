@@ -8,10 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -101,30 +99,52 @@ func RunPKCEFlows(ctx context.Context, cfg PKCEConfig) (*PKCEResult, error) {
 // runSinglePKCEFlow runs one PKCE Authorization Code flow and returns the raw
 // access token string. label is used only for logging / stderr messages.
 func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (string, error) {
+	token, err := runSinglePKCETokenFlow(ctx, cfg, label)
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
+}
+
+func runSinglePKCETokenFlow(ctx context.Context, cfg PKCEConfig, label string) (*Token, error) {
+	_, results, err := startPKCETokenFlow(ctx, cfg, label)
+	if err != nil {
+		return nil, err
+	}
+	result := <-results
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return &result.Token, nil
+}
+
+func startPKCETokenFlow(ctx context.Context, cfg PKCEConfig, label string) (string, <-chan SubjectLoginResult, error) {
 	deadline := cfg.Deadline
 	if deadline == 0 {
 		deadline = 5 * time.Minute
 	}
 	flowCtx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
 
 	// Generate PKCE verifier and S256 challenge.
 	verifier, err := generateCodeVerifier()
 	if err != nil {
-		return "", fmt.Errorf("generating code verifier: %w", err)
+		cancel()
+		return "", nil, fmt.Errorf("generating code verifier: %w", err)
 	}
 	challenge := codeChallenge(verifier)
 
 	// Generate a CSRF state token.
 	state, err := stateGenerator()
 	if err != nil {
-		return "", fmt.Errorf("generating state: %w", err)
+		cancel()
+		return "", nil, fmt.Errorf("generating state: %w", err)
 	}
 
 	// Parse RedirectURL to extract the callback path and listener address.
 	redirURL, err := url.Parse(cfg.RedirectURL)
 	if err != nil {
-		return "", fmt.Errorf("parsing redirect URL: %w", err)
+		cancel()
+		return "", nil, fmt.Errorf("parsing redirect URL: %w", err)
 	}
 	callbackPath := redirURL.Path
 	if callbackPath == "" {
@@ -141,53 +161,95 @@ func runSinglePKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (strin
 		q := r.URL.Query()
 		if idpErr := q.Get("error"); idpErr != "" {
 			desc := q.Get("error_description")
-			errCh <- fmt.Errorf("auth: IdP returned error %q: %s", idpErr, desc)
+			select {
+			case errCh <- fmt.Errorf("auth: IdP returned error %q: %s", idpErr, desc):
+			default:
+			}
 			http.Error(w, "Authentication failed. You may close this tab.", http.StatusBadRequest)
 			return
 		}
 		// Validate CSRF state.
 		if got := q.Get("state"); got != state {
-			errCh <- fmt.Errorf("auth: state mismatch (CSRF check failed)")
+			select {
+			case errCh <- fmt.Errorf("auth: state mismatch (CSRF check failed)"):
+			default:
+			}
 			http.Error(w, "State mismatch. You may close this tab.", http.StatusBadRequest)
 			return
 		}
 		code := q.Get("code")
 		if code == "" {
-			errCh <- fmt.Errorf("auth: redirect missing 'code' parameter")
+			select {
+			case errCh <- fmt.Errorf("auth: redirect missing 'code' parameter"):
+			default:
+			}
 			http.Error(w, "Missing code. You may close this tab.", http.StatusBadRequest)
 			return
 		}
 		fmt.Fprintf(os.Stderr, "[vault-mcp-server] %s auth code received\n", label)
-		codeCh <- code
+		select {
+		case codeCh <- code:
+		default:
+			http.Error(w, "Callback already received.", http.StatusConflict)
+			return
+		}
 		fmt.Fprintf(w, "Authentication successful (%s). You may close this tab.", label)
 	})
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return "", fmt.Errorf("starting local listener on %s: %w\n\thint: another process is using port %s — free it or set VAULT_MCP_REDIRECT_URL to a different port (e.g. http://localhost:49153/callback) and update the OAuth client's registered redirect URIs accordingly", listenAddr, err, redirURL.Port())
+		cancel()
+		return "", nil, fmt.Errorf("starting local listener on %s: %w", listenAddr, err)
 	}
 
 	srv := &http.Server{Handler: mux}
-	go func() { _ = srv.Serve(ln) }()
-	defer srv.Shutdown(context.Background()) //nolint:errcheck // best-effort shutdown
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			select {
+			case errCh <- fmt.Errorf("auth: callback server failed: %w", err):
+			default:
+			}
+		}
+	}()
 
 	// Build the authorization URL.
 	authURL := buildAuthURL(cfg, challenge, state)
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Opening browser for %s authentication:\n  %s\n", label, authURL)
-	openBrowser(authURL)
-
-	// Wait for the redirect code, a timeout, or a cancellation.
-	select {
-	case code := <-codeCh:
-		return exchangeCode(cfg, code, verifier, state)
-	case err := <-errCh:
-		return "", err
-	case <-flowCtx.Done():
-		if errors.Is(flowCtx.Err(), context.DeadlineExceeded) {
-			return "", ErrAuthTimeout
-		}
-		return "", flowCtx.Err()
+	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Opening browser for %s authentication\n", label)
+	if err := openBrowser(authURL); err != nil {
+		fmt.Fprintf(os.Stderr, "[vault-mcp-server] Could not open browser: %v; open the sign-in URL returned by the login tool manually\n", err)
 	}
+
+	results := make(chan SubjectLoginResult, 1)
+	go func() {
+		defer cancel()
+		defer close(results)
+		var result SubjectLoginResult
+		select {
+		case code := <-codeCh:
+			token, err := exchangeCodeToken(flowCtx, cfg, code, verifier)
+			result.Err = err
+			if token != nil {
+				result.Token = *token
+			}
+		case err := <-errCh:
+			result.Err = err
+		case <-flowCtx.Done():
+			result.Err = flowCtx.Err()
+			if errors.Is(result.Err, context.DeadlineExceeded) {
+				result.Err = ErrAuthTimeout
+			}
+		}
+		shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
+		defer stop()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "[vault-mcp-server] Callback shutdown failed: %v\n", err)
+			if err := srv.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "[vault-mcp-server] Callback close failed: %v\n", err)
+			}
+		}
+		results <- result
+	}()
+	return authURL, results, nil
 }
 
 // generateCodeVerifier creates a cryptographically random 32-byte PKCE verifier
@@ -243,61 +305,23 @@ func buildAuthURL(cfg PKCEConfig, challenge, state string) string {
 // The state parameter is accepted but not forwarded to the token endpoint;
 // it was already validated by the callback handler before exchangeCode is called.
 func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (string, error) {
+	token, err := exchangeCodeToken(context.Background(), cfg, code, verifier)
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
+}
+
+func exchangeCodeToken(ctx context.Context, cfg PKCEConfig, code, verifier string) (*Token, error) {
 	body := url.Values{}
 	body.Set("grant_type", "authorization_code")
 	body.Set("code", code)
 	body.Set("redirect_uri", cfg.RedirectURL)
 	body.Set("code_verifier", verifier)
 
-	// Credentials are added before encoding so the body length is computed once.
-	var useBasicAuth bool
-	if cfg.ClientSecret != "" {
-		// client_secret_basic: send credentials in Authorization header only.
-		useBasicAuth = true
-	} else {
-		// Public client: client_id in POST body.
-		body.Set("client_id", cfg.ClientID)
-	}
-
-	encoded := body.Encode()
-	req, err := http.NewRequest(http.MethodPost, cfg.TokenURL, strings.NewReader(encoded))
-	if err != nil {
-		return "", fmt.Errorf("building token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if useBasicAuth {
-		req.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token endpoint POST failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading token response: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token endpoint response (HTTP %d)\n", resp.StatusCode)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
-	}
-
-	var tok tokenResponse
-	if err := json.Unmarshal(raw, &tok); err != nil {
-		return "", fmt.Errorf("parsing token response: %w", err)
-	}
-	if tok.Error != "" {
-		return "", fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("token endpoint returned empty access_token")
-	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful\n")
-	return tok.AccessToken, nil
+	return postTokenForm(ctx, cfg.TokenURL, cfg.ClientID, cfg.ClientSecret, body)
 }
+
 // openBrowser attempts to open u in a private/incognito window.
 // It returns an error if no supported browser is available or if the
 // browser process cannot be started.
@@ -396,7 +420,7 @@ func openBrowser(u string) error {
 		}
 	}
 
-		
+
 	for _, c := range candidates {
 		if path, err := exec.LookPath(c.bin); err == nil {
 			_ = exec.Command(path, c.flag, u).Start()

@@ -43,10 +43,10 @@ type DelegationJWT struct {
 
 // jwtPayload is the internal struct used only during JSON unmarshalling of the JWT payload.
 type jwtPayload struct {
-	Sub                  string             `json:"sub"`
-	Act                  ActorClaim         `json:"act"`
-	Exp                  int64              `json:"exp"`
-	AuthorizationDetails []json.RawMessage  `json:"authorization_details"`
+	Sub                  string            `json:"sub"`
+	Act                  ActorClaim        `json:"act"`
+	Exp                  int64             `json:"exp"`
+	AuthorizationDetails []json.RawMessage `json:"authorization_details"`
 }
 
 // ParseUnsigned decodes and parses the payload of a JWT without verifying its signature.
