@@ -19,6 +19,7 @@ import (
 
 	"github.com/hashicorp/vault-mcp-server/pkg/auth"
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/session"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
 	"github.com/hashicorp/vault-mcp-server/version"
@@ -130,6 +131,8 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	hcServer := NewServer(version.Version, logger, nil)
 	tools.InitTools(hcServer, logger)
 
+	var slot *session.Slot
+
 	// When VAULT_MCP_AUTH_ENABLED is set, register the login tools so the user
 	// can authenticate from the chat instead of at server startup.
 	// When disabled, the VAULT_TOKEN fallback path is used as before.
@@ -140,13 +143,18 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 		}, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
 		defer closeSession()
-		hcServer.GetHooks().AddOnUnregisterSession(func(context.Context, server.ClientSession) { closeSession() })
+		// Auth state is process-wide, so M1 admits one session at a time. The
+		// session limit handler ends it on DELETE and at shutdown.
+		slot = session.NewSlot(sessionConfigFromEnv(logger), func(string, string) { closeSession() }, logger)
+		defer slot.Shutdown(session.ReasonShutdown)
 	}
 
-	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
+	return httpServerInit(ctx, hcServer, slot, logger, host, port, endpointPath)
 }
 
-func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log.Logger, host string, port string, endpointPath string) error {
+// httpServerInit serves hcServer over streamable HTTP. A non-nil slot limits
+// the server to one session (extra initialize requests get 409).
+func httpServerInit(ctx context.Context, hcServer *server.MCPServer, slot *session.Slot, logger *log.Logger, host string, port string, endpointPath string) error {
 	// Ensure endpoint path starts with /
 	endpointPath = path.Join("/", endpointPath)
 	// Create StreamableHTTP server which implements the new streamable-http transport
@@ -170,7 +178,10 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 
 	// Create StreamableHTTP server which implements the new streamable-http transport
 	// This is the modern MCP transport that supports both direct HTTP responses and SSE streams
-	baseStreamableServer := server.NewStreamableHTTPServer(hcServer, opts...)
+	var baseStreamableServer http.Handler = server.NewStreamableHTTPServer(hcServer, opts...)
+	if slot != nil {
+		baseStreamableServer = session.NewSessionLimitHandler(slot, baseStreamableServer, logger)
+	}
 
 	// Load CORS configuration
 	corsConfig := client.LoadCORSConfigFromEnv()
@@ -251,6 +262,32 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 	}
 
 	return nil
+}
+
+const (
+	defaultSessionIdleTimeout = 30 * time.Minute
+	defaultSessionMaxLifetime = 7 * 24 * time.Hour
+)
+
+// sessionConfigFromEnv builds the session expiry settings.
+func sessionConfigFromEnv(logger *log.Logger) session.Config {
+	return session.Config{
+		IdleTimeout: durationFromEnv("VAULT_MCP_SESSION_IDLE_TIMEOUT", defaultSessionIdleTimeout, logger),
+		MaxLifetime: durationFromEnv("VAULT_MCP_SESSION_MAX_LIFETIME", defaultSessionMaxLifetime, logger),
+	}
+}
+
+func durationFromEnv(name string, def time.Duration, logger *log.Logger) time.Duration {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		logger.Warnf("Invalid %s %q (want a positive duration such as 30m); using %s", name, v, def)
+		return def
+	}
+	return d
 }
 
 // authConfigFromEnv constructs an AuthConfig from well-known environment variables.

@@ -79,6 +79,8 @@ The server can be configured using environment variables:
 - `MCP_TLS_KEY_FILE`: Location of the TLS key file (e.g. `/path/to/key.pem`)(default: `""`)
 - `MCP_RATE_LIMIT_GLOBAL`: Global rate limit (format: `rps:burst`) (default: `10:20`)
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
+- `VAULT_MCP_SESSION_IDLE_TIMEOUT`: With `VAULT_MCP_AUTH_ENABLED=true` on HTTP, how long a signed-in session may stay idle before it ends and its credentials are revoked (default: `30m`)
+- `VAULT_MCP_SESSION_MAX_LIFETIME`: With `VAULT_MCP_AUTH_ENABLED=true` on HTTP, the longest a session may last from `initialize`, however active it is, before it ends and its credentials are revoked. Go duration syntax, so use hours for days (default: `168h`, 7 days)
 
 ## HTTP Mode Configuration
 
