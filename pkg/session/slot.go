@@ -141,7 +141,7 @@ func (s *Slot) Commit(id string) error {
 	if s.cfg.MaxLifetime > 0 {
 		s.lifeTimer = time.AfterFunc(s.cfg.MaxLifetime, func() { s.End(id, ReasonMaxLifetime) })
 	}
-	s.log.WithField("session_id", id).Info("Session started")
+	s.log.Info("Session started")
 	return nil
 }
 
@@ -226,7 +226,7 @@ func (s *Slot) beginEndLocked() (started time.Time, done chan struct{}) {
 }
 
 func (s *Slot) finish(id, reason string, started time.Time, done chan struct{}) {
-	entry := s.log.WithFields(log.Fields{"session_id": id, "reason": reason})
+	entry := s.log.WithField("reason", reason)
 	entry.Info("Session ending")
 	if s.onEnd != nil {
 		s.onEnd(id, reason)

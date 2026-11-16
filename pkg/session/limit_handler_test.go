@@ -113,6 +113,14 @@ func TestLimitHandlerInitializeWithoutIDIsNotAdmitted(t *testing.T) {
 	require.NoError(t, slot.Reserve(), "the slot was released")
 }
 
+func TestLimitHandlerOversizedBodyIsRejected(t *testing.T) {
+	g, slot := newLimitHandlerTest(&fakeMCP{})
+
+	big := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":"` + strings.Repeat("a", maxPeekBytes) + `"}`
+	require.Equal(t, http.StatusRequestEntityTooLarge, do(g, http.MethodPost, big, "").Code)
+	require.NoError(t, slot.Reserve(), "the slot was never taken")
+}
+
 func TestLimitHandlerRouting(t *testing.T) {
 	g, _ := newLimitHandlerTest(&fakeMCP{})
 

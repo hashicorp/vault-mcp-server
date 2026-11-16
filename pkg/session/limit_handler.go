@@ -58,7 +58,12 @@ func (h *SessionLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	if r.Method == http.MethodPost {
 		isInit, err := peekIsInitialize(r)
-		if err != nil {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge):
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		case err != nil:
 			http.Error(w, "Could not read request body", http.StatusBadRequest)
 			return
 		}
@@ -78,7 +83,7 @@ func (h *SessionLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !h.slot.Has(id) {
-		h.log.WithFields(log.Fields{"session_id": id, "method": r.Method}).Info("Request for unknown or ended session rejected (404)")
+		h.log.WithField("method", r.Method).Info("Request for unknown or ended session rejected (404)")
 		http.Error(w, "Session not found or expired: send a new initialize request", http.StatusNotFound)
 		return
 	}
@@ -104,8 +109,12 @@ func (h *SessionLimitHandler) admit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Another MCP session is already active on this server. Only one session is allowed at a time; "+
 			"close the other client and try again.", http.StatusConflict)
 		return
-	case err != nil: // ErrClosed: shutting down
+	case errors.Is(err, ErrClosed):
 		http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
+		return
+	case err != nil:
+		h.log.WithError(err).Error("initialize rejected: could not reserve session")
+		http.Error(w, "Could not start a session", http.StatusInternalServerError)
 		return
 	}
 
@@ -123,7 +132,7 @@ func (h *SessionLimitHandler) admit(w http.ResponseWriter, r *http.Request) {
 	// the slot until it expires.
 	if sid := w.Header().Get(HeaderSessionID); sid != "" {
 		if err := h.slot.Commit(sid); err != nil {
-			h.log.WithError(err).WithField("session_id", sid).Warn("Could not admit session after initialize")
+			h.log.WithError(err).Warn("Could not admit session after initialize")
 		}
 	}
 }
