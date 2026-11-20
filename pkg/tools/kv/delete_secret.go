@@ -64,10 +64,12 @@ func deleteSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *l
 		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
 	}
 
-	// Can be empty to delete the entire secret
-	key, ok := args["key"].(string)
-	if !ok {
-		return mcp.NewToolResultError("Missing or invalid 'key' parameter"), nil
+	// Optional: a missing or empty key deletes the entire secret
+	key := ""
+	if v, present := args["key"]; present && v != nil {
+		if key, ok = v.(string); !ok {
+			return mcp.NewToolResultError("Invalid 'key' parameter"), nil
+		}
 	}
 
 	logger.WithFields(log.Fields{

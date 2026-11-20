@@ -113,3 +113,54 @@ func TestDeleteSecretHandler_SoftDeletedSecretV2(t *testing.T) {
 	assert.True(t, result.IsError, "deleting from a soft-deleted secret should return an error")
 	assert.Contains(t, getResultText(result), "deleted")
 }
+
+func TestDeleteSecretHandler_NoKeyDeletesWholeSecretV2(t *testing.T) {
+	logger := newLogger()
+	deleted := false
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sys/mounts", func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, mountsV2Response("secrets"))
+	})
+	mux.HandleFunc("/v1/secrets/data/app/creds", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			jsonResponse(w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"username": "admin",
+						"password": "secret123",
+					},
+					"metadata": map[string]interface{}{
+						"version": 1,
+					},
+				},
+			})
+		case http.MethodDelete:
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s request", r.Method)
+		}
+	})
+
+	ctx, cleanup := newTestContext(t, mux)
+	defer cleanup()
+
+	// "key" is optional, so a client may leave it out entirely
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "delete_secret",
+			Arguments: map[string]interface{}{
+				"mount": "secrets",
+				"path":  "app/creds",
+			},
+		},
+	}
+
+	result, err := deleteSecretHandler(ctx, req, logger)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError, "expected success, got error: %s", getResultText(result))
+	assert.True(t, deleted, "expected the whole secret to be deleted")
+}
