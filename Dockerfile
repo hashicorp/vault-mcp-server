@@ -39,6 +39,8 @@ WORKDIR /server
 # Copy the binary from the build stage
 COPY --from=devbuild /build/vault-mcp-server .
 COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# Run as a non-root user for Kubernetes compatibility.
+USER 65532:65532
 # Command to run the server
 CMD ["./vault-mcp-server", "stdio"]
 
@@ -63,6 +65,8 @@ LABEL version=$PRODUCT_VERSION
 LABEL revision=$PRODUCT_REVISION
 COPY dist/$TARGETOS/$TARGETARCH/$BIN_NAME /bin/vault-mcp-server
 COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# Run as a non-root user for Kubernetes compatibility.
+USER 65532:65532
 CMD ["/bin/vault-mcp-server", "stdio"]
 
 # ===================================

@@ -1,3 +1,6 @@
+
+* Run as a non-root user for Kubernetes compatibility.
+
 ## 0.2.1
 
 FEATURES
