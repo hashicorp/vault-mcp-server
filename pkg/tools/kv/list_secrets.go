@@ -33,6 +33,10 @@ func ListSecrets(logger *log.Logger) server.ServerTool {
 			mcp.WithString("path",
 				mcp.DefaultString(""),
 				mcp.Description("The full path to list the secrets to without the mount prefix. For example, if you want to list from 'secrets/application/credentials', this should be 'application/credentials'.")),
+			mcp.WithString("namespace",
+				mcp.DefaultString(""),
+				mcp.Description("Optional Vault namespace override for this call (for example: 'admin/team-03'). If not set, uses the MCP session namespace."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return listSecretsHandler(ctx, req, logger)
@@ -58,6 +62,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if path == "" {
 		path = ""
 	}
+	namespace, _ := args["namespace"].(string)
 
 	logger.WithFields(log.Fields{
 		"mount": mount,
@@ -70,6 +75,7 @@ func listSecretsHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
+	vault = withOptionalNamespace(vault, namespace)
 
 	// Construct the full path for listing
 	fullPath := fmt.Sprintf(mount+"/%s", path)

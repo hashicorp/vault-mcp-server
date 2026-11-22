@@ -30,6 +30,10 @@ func ReadSecret(logger *log.Logger) server.ServerTool {
 				mcp.Required(),
 				mcp.Description("The full path to read the secret to without the mount prefix. For example, if you want to read from 'secrets/application/credentials', this should be 'application/credentials'."),
 			),
+			mcp.WithString("namespace",
+				mcp.DefaultString(""),
+				mcp.Description("Optional Vault namespace override for this call (for example: 'admin/team-03'). If not set, uses the MCP session namespace."),
+			),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return readSecretHandler(ctx, req, logger)
@@ -55,6 +59,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 	if !ok || path == "" {
 		return mcp.NewToolResultError("Missing or invalid 'path' parameter"), nil
 	}
+	namespace, _ := args["namespace"].(string)
 
 	logger.WithFields(log.Fields{
 		"mount": mount,
@@ -67,6 +72,7 @@ func readSecretHandler(ctx context.Context, req mcp.CallToolRequest, logger *log
 		logger.WithError(err).Error("Failed to get Vault client")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Vault client: %v", err)), nil
 	}
+	vault = withOptionalNamespace(vault, namespace)
 
 	mounts, err := vault.Sys().ListMounts()
 	if err != nil {
