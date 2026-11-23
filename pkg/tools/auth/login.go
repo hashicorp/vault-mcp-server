@@ -39,18 +39,25 @@ type LoginState struct {
 	// lastFailure is a short reason shown after a failed sign-in attempt.
 	lastFailure string
 	cancels     []context.CancelFunc
-	// gen identifies the current login attempt; background goroutines from an
-	// attempt that was closed or invalidated see a different value and stop.
+	// gen identifies the current login attempt. A goroutine cannot be stopped from
+	// outside, so each one remembers the gen it started with and returns without
+	// touching state if it no longer matches. This stops an attempt that was
+	// closed, invalidated or restarted from publishing credentials afterwards.
 	gen uint64
 
 	tokenSource *auth.TokenSource
 
+	// onReady is supplied by the caller and is called with the new TokenSource
+	// once login completes. It keeps this package unaware of where the caller
+	// publishes the token source (in main it is activeTokenSource.Store).
 	onReady func(*auth.TokenSource)
 	logger  *log.Logger
 }
 
 // NewLoginTools creates the login state and returns the vault_login and
-// vault_auth_status tools. onReady is called when the TokenSource is ready.
+// vault_auth_status tools. onReady is called when the TokenSource is ready. The
+// TokenSource is created in complete() after the STS exchange and handed to
+// onReady; it is not passed in here.
 func NewLoginTools(cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger *log.Logger) (
 	login, authStatus *ToolDef, closeSession func(),
 ) {
@@ -222,11 +229,14 @@ func (s *LoginState) complete(gen uint64, subject, actor auth.PKCEFlowResult) {
 		return
 	}
 	s.mu.Unlock()
-
 	pkceResult := &auth.PKCEResult{
 		SubjectToken:        subject.Token.AccessToken,
 		SubjectRefreshToken: subject.Token.RefreshToken,
+		SubjectIssuedAt:     subject.Token.IssuedAt,
+		SubjectExpiresAt:    subject.Token.ExpiresAt,
 		ActorToken:          actor.Token.AccessToken,
+		ActorIssuedAt:       actor.Token.IssuedAt,
+		ActorExpiresAt:      actor.Token.ExpiresAt,
 	}
 	jwt, err := auth.ExchangeTokens(
 		pkceResult.SubjectToken, pkceResult.ActorToken,

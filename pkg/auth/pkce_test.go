@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,4 +159,54 @@ func TestBuildAuthURL(t *testing.T) {
 	// other compliant OAuth clients (e.g. oauth2c) also send.
 	assert.Contains(t, authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A9000%2Fcallback",
 		"redirect_uri must be percent-encoded in the authorization URL")
+}
+
+// The expiry is measured from when the request was sent, from expires_in.
+func TestPostTokenForm_RecordsTimes(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantTTL time.Duration
+	}{
+		{"number", `{"access_token":"t","expires_in":3600}`, time.Hour},
+		{"string", `{"access_token":"t","expires_in":"3600"}`, time.Hour},
+		{"missing means unknown", `{"access_token":"t"}`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprint(w, tt.body)
+			}))
+			t.Cleanup(srv.Close)
+
+			before := time.Now()
+			tok, err := postTokenForm(srv.URL, "client", "", url.Values{"grant_type": {"refresh_token"}})
+			after := time.Now()
+
+			require.NoError(t, err)
+			assert.False(t, tok.IssuedAt.Before(before))
+			assert.False(t, tok.IssuedAt.After(after))
+			if tt.wantTTL == 0 {
+				assert.True(t, tok.ExpiresAt.IsZero())
+				return
+			}
+			assert.Equal(t, tt.wantTTL, tok.ExpiresAt.Sub(tok.IssuedAt))
+		})
+	}
+}
+
+func TestPostTokenForm_TimesOut(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	old := httpTimeout
+	httpTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { httpTimeout = old })
+
+	start := time.Now()
+	_, err := postTokenForm(srv.URL, "client", "", url.Values{"grant_type": {"refresh_token"}})
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 2*time.Second)
 }

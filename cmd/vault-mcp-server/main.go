@@ -36,8 +36,9 @@ const (
 	DefaultEndPointPath = "/mcp"
 )
 
-// activeTokenSource holds the Delegation JWT acquired at startup and renews it
-// before expiry. nil when auth is disabled (VAULT_TOKEN path).
+// activeTokenSource holds the Delegation JWT acquired at login and renews it on
+// demand when a tool call finds it close to expiry. nil when auth is disabled
+// (VAULT_TOKEN path).
 var activeTokenSource atomic.Pointer[auth.TokenSource]
 
 var (
@@ -137,10 +138,7 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	// can authenticate from the chat instead of at server startup.
 	// When disabled, the VAULT_TOKEN fallback path is used as before.
 	if cfg.Enabled {
-		closeLogin := tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
-			activeTokenSource.Store(ts)
-			startTokenRefresh(ctx, ts)
-		}, logger)
+		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
 		defer closeSession()
 		// Auth state is process-wide, so M1 admits one session at a time. The
@@ -310,15 +308,6 @@ func authConfigFromEnv() auth.AuthConfig {
 	}
 }
 
-// startTokenRefresh starts the background refresh loop that renews the
-// Delegation JWT in memory. No-op when ts is nil.
-func startTokenRefresh(ctx context.Context, ts *auth.TokenSource) {
-	if ts == nil {
-		return
-	}
-	ts.Start(ctx)
-}
-
 func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -328,10 +317,7 @@ func runStdioServer(logger *log.Logger) error {
 	tools.InitTools(hcServer, logger)
 
 	if cfg.Enabled {
-		closeLogin := tools.InitLoginTools(hcServer, cfg, func(ts *auth.TokenSource) {
-			activeTokenSource.Store(ts)
-			startTokenRefresh(ctx, ts)
-		}, logger)
+		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
 		defer closeSession()
 		hcServer.GetHooks().AddOnUnregisterSession(func(context.Context, server.ClientSession) { closeSession() })
@@ -348,11 +334,42 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 	// jwtMiddleware stamps the DelegationJWT into every tool-handler context so
 	// that GetVaultClientFromContext can authenticate to Vault using the JWT.
 	// activeTokenSource is read on every request so login-after-startup is picked up.
+	// The JWT is renewed here, on demand, when it is close to expiry. Login tools
+	// skip renewal so vault_login still works when renewal is failing.
 	// When auth is enabled and login is pending, non-login tool calls are refused
 	// with a "please login" message. When auth is disabled, this is a no-op.
+	//
+	// This middleware runs inside the MCP tool-call chain, after the HTTP session
+	// layer (pkg/session) has admitted the request. The two are independent: the
+	// session layer ends a session on DELETE, idle timeout, max lifetime or
+	// shutdown, and sessionCleanup then revokes and closes the token source, while
+	// token renewal here only follows token lifetimes. A tool call already running
+	// when its session ends is not cancelled.
 	jwtMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			delegationJWT := activeTokenSource.Load().Get()
+			ts := activeTokenSource.Load()
+			var delegationJWT *auth.DelegationJWT
+			if isLoginTool(req.Params.Name) {
+				// Login tools use the current token as is, without renewing it.
+				delegationJWT = ts.Get()
+			} else {
+				var err error
+				// Get the current token, renewing it first if it is close to expiry.
+				delegationJWT, err = ts.Token(ctx)
+				if err != nil {
+					// Renewal failed: either the user must sign in again, or it was
+					// a temporary failure.
+					fields := log.Fields{"tool": req.Params.Name, "outcome": "denied"}
+					if errors.Is(err, auth.ErrReauthRequired) {
+						fields["reason"] = "reauth_required"
+						logger.WithError(err).WithFields(fields).Warn("Vault operation blocked before reaching Vault")
+						return mcp.NewToolResultError("Re-authentication required. Call vault_login."), nil
+					}
+					fields["reason"] = "renewal_failed"
+					logger.WithError(err).WithFields(fields).Warn("Vault operation blocked before reaching Vault")
+					return mcp.NewToolResultError("Could not renew Vault credentials. Try again shortly; call vault_login if it keeps failing."), nil
+				}
+			}
 			if delegationJWT == nil {
 				if os.Getenv("VAULT_MCP_AUTH_ENABLED") == "true" && !isLoginTool(req.Params.Name) {
 					logger.WithFields(log.Fields{"tool": req.Params.Name, "outcome": "denied", "reason": "not_authenticated"}).Warn("Vault operation blocked before reaching Vault")
@@ -412,6 +429,11 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 }
 
 func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
+	// Known limitation: a tool call still running when the session ends is not
+	// cancelled. Its Vault client has its token cleared below, but if it creates
+	// a client after ClearVaultClients ran, that client holds the JWT in the cache
+	// until the next cleanup. The JWT is not revoked at Vault and expires on its own.
+	//TODO: Check this
 	return func() {
 		// Revoke first: closeLogin also closes the token source and drops its tokens.
 		ts := activeTokenSource.Swap(nil)

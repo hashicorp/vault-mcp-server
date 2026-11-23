@@ -20,8 +20,17 @@ import (
 	"time"
 )
 
+// httpTimeout bounds each IdP and STS request. It is a variable so tests can shorten it.
+var httpTimeout = 10 * time.Second
+
+// httpClient is used for every IdP token endpoint and STS request.
+func httpClient() *http.Client {
+	return &http.Client{Timeout: httpTimeout}
+}
+
 // generateState creates a cryptographically random 16-byte CSRF state token
-// encoded as base64url without padding.
+// encoded as base64url without padding. The IdP echoes it back on the callback,
+// where it is checked to reject forged or replayed callbacks.
 func generateState() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -67,14 +76,29 @@ type PKCEResult struct {
 	// SubjectRefreshToken is set only when the IdP issued a refresh_token; it
 	// allows the delegation JWT to be renewed without a new browser login.
 	SubjectRefreshToken string
+	// The issue and expiry times of each access token. IssuedAt is when the token
+	// request was sent, so ExpiresAt is never later than the real expiry. A zero
+	// ExpiresAt means unknown, in which case the token is renewed with every JWT.
+	SubjectIssuedAt  time.Time
+	SubjectExpiresAt time.Time
+	ActorIssuedAt    time.Time
+	ActorExpiresAt   time.Time
 }
 
 // tokenResponse is the minimal subset of the OAuth token endpoint JSON response.
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	Error        string `json:"error"`
-	ErrorDesc    string `json:"error_description"`
+	// ExpiresIn is json.Number so that both 3600 and "3600" decode. IBM Verify
+	// always returns it.
+	ExpiresIn json.Number `json:"expires_in"`
+	Error     string      `json:"error"`
+	ErrorDesc string      `json:"error_description"`
+
+	// IssuedAt and ExpiresAt are filled in by postTokenForm as soon as the
+	// response arrives. ExpiresAt is zero when the response had no expires_in.
+	IssuedAt  time.Time `json:"-"`
+	ExpiresAt time.Time `json:"-"`
 }
 
 // PKCEFlowResult is delivered on the channel returned by StartPKCEFlow.
@@ -273,7 +297,10 @@ func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*t
 		req.SetBasicAuth(clientID, clientSecret)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	// The expiry is measured from when the request was sent, so it can only be
+	// earlier than the real one, never later.
+	issuedAt := time.Now()
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token endpoint POST failed: %w", err)
 	}
@@ -302,6 +329,10 @@ func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*t
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("token endpoint returned empty access_token")
+	}
+	tok.IssuedAt = issuedAt
+	if secs, err := tok.ExpiresIn.Int64(); err == nil && secs > 0 {
+		tok.ExpiresAt = issuedAt.Add(time.Duration(secs) * time.Second)
 	}
 	return &tok, nil
 }

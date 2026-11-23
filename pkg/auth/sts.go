@@ -86,7 +86,7 @@ func ExchangeTokens(subjectToken, actorToken, stsEndpoint, clientID, clientSecre
 		req.SetBasicAuth(clientID, clientSecret)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("auth: STS token exchange POST failed: %w", err)
 	}
