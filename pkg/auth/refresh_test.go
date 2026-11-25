@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -217,8 +220,9 @@ func TestTokenSource_InvalidGrantRequiresReauthentication(t *testing.T) {
 		fmt.Fprint(w, `{"error":"invalid_grant"}`)
 	}))
 	t.Cleanup(idp.Close)
-	ts := NewTokenSource(AuthConfig{TokenURL: idp.URL}, initialJWT(t, time.Now().Add(time.Minute)),
-		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "subject-rt"})
+	revokeURL, calls := newRevokeRecorder(t)
+	ts := NewTokenSource(AuthConfig{TokenURL: idp.URL, RevokeURL: revokeURL}, initialJWT(t, time.Now().Add(time.Minute)),
+		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"})
 	invalidated := false
 	ts.OnInvalidated(func() { invalidated = true })
 
@@ -229,6 +233,8 @@ func TestTokenSource_InvalidGrantRequiresReauthentication(t *testing.T) {
 	assert.Nil(t, ts.Get())
 	assert.Empty(t, ts.subjectRefreshToken)
 	assert.Empty(t, ts.subjectToken)
+	// Invalidation revokes what the session still holds.
+	assert.ElementsMatch(t, []string{"subject-rt", "actor-at"}, revokedTokens(calls()))
 }
 
 // A rejected actor client is a configuration problem: the JWT is kept and no
@@ -436,53 +442,171 @@ func TestTokenSource_ReusesCachedSubjectTokenWithoutRefreshToken(t *testing.T) {
 	assert.Equal(t, "fresh-actor", gotActor)
 }
 
-// TestTokenSource_Revoke: the Subject (confidential) authenticates with
-// client_secret_basic and the Actor with client_secret_post.
-func TestTokenSource_Revoke(t *testing.T) {
-	type call struct {
-		basicID, basicSecret string
-		hasBasic             bool
-		form                 map[string]string
-	}
-	calls := make(chan call, 2)
+// revokeCall is one request received by the fake revocation endpoint.
+type revokeCall struct {
+	token, hint, clientID, clientSecret string
+	basic                               bool
+}
+
+// newRevokeRecorder starts a fake RFC 7009 endpoint that records every request.
+// Tokens listed in failTokens get HTTP 500.
+func newRevokeRecorder(t *testing.T, failTokens ...string) (url string, calls func() []revokeCall) {
+	t.Helper()
+	var mu sync.Mutex
+	var recorded []revokeCall
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())
-		id, secret, ok := r.BasicAuth()
-		calls <- call{id, secret, ok, map[string]string{
-			"token":           r.PostForm.Get("token"),
-			"token_type_hint": r.PostForm.Get("token_type_hint"),
-			"client_id":       r.PostForm.Get("client_id"),
-			"client_secret":   r.PostForm.Get("client_secret"),
-		}}
+		id, secret, basic := r.BasicAuth()
+		if !basic {
+			id, secret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+		}
+		c := revokeCall{r.PostForm.Get("token"), r.PostForm.Get("token_type_hint"), id, secret, basic}
+		mu.Lock()
+		recorded = append(recorded, c)
+		mu.Unlock()
+		if slices.Contains(failTokens, c.token) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 	}))
 	t.Cleanup(srv.Close)
-
-	f := newRefreshFixture(t, "unused")
-	f.cfg.RevokeURL = srv.URL
-	f.cfg.SubjectClientID, f.cfg.SubjectClientSecret = "subject-app", "subject-secret"
-	f.cfg.ActorClientID, f.cfg.ActorClientSecret = "actor-app", "actor-secret"
-	ts := NewTokenSource(f.cfg, initialJWT(t, time.Now().Add(time.Hour)),
-		&PKCEResult{SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"})
-
-	require.NoError(t, ts.Revoke())
-	close(calls)
-
-	byToken := map[string]call{}
-	for c := range calls {
-		byToken[c.form["token"]] = c
+	return srv.URL, func() []revokeCall {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(recorded)
 	}
-	require.Len(t, byToken, 2)
+}
 
-	subject := byToken["subject-rt"]
-	assert.True(t, subject.hasBasic)
-	assert.Equal(t, "subject-app", subject.basicID)
-	assert.Equal(t, "subject-secret", subject.basicSecret)
-	assert.Equal(t, "refresh_token", subject.form["token_type_hint"])
-	assert.Empty(t, subject.form["client_secret"])
+func revokedTokens(calls []revokeCall) []string {
+	tokens := make([]string, 0, len(calls))
+	for _, c := range calls {
+		tokens = append(tokens, c.token)
+	}
+	return tokens
+}
 
-	actor := byToken["actor-at"]
-	assert.False(t, actor.hasBasic)
-	assert.Equal(t, "actor-app", actor.form["client_id"])
-	assert.Equal(t, "actor-secret", actor.form["client_secret"])
-	assert.Equal(t, "access_token", actor.form["token_type_hint"])
+func revokeConfig(revokeURL string) AuthConfig {
+	return AuthConfig{
+		RevokeURL:           revokeURL,
+		SubjectClientID:     "subject-app",
+		SubjectClientSecret: "subject-secret",
+		ActorClientID:       "actor-app",
+		ActorClientSecret:   "actor-secret",
+	}
+}
+
+// With a refresh token, only it and the Actor access token are revoked. The
+// Subject (confidential) authenticates with client_secret_basic and the Actor
+// with client_secret_post.
+func TestTokenSource_Revoke(t *testing.T) {
+	url, calls := newRevokeRecorder(t)
+	ts := NewTokenSource(revokeConfig(url), initialJWT(t, time.Now().Add(time.Hour)),
+		&PKCEResult{SubjectToken: "subject-at", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"})
+
+	ts.Revoke()
+
+	byToken := map[string]revokeCall{}
+	for _, c := range calls() {
+		byToken[c.token] = c
+	}
+	require.Len(t, byToken, 2, "the subject access token is not revoked when its refresh token is")
+	assert.Equal(t, revokeCall{"subject-rt", "refresh_token", "subject-app", "subject-secret", true}, byToken["subject-rt"])
+	assert.Equal(t, revokeCall{"actor-at", "access_token", "actor-app", "actor-secret", false}, byToken["actor-at"])
+}
+
+func TestTokenSource_Revoke_NoRefreshTokenRevokesSubjectAccessToken(t *testing.T) {
+	url, calls := newRevokeRecorder(t)
+	ts := NewTokenSource(revokeConfig(url), initialJWT(t, time.Now().Add(time.Hour)),
+		&PKCEResult{SubjectToken: "subject-at", ActorToken: "actor-at"})
+
+	ts.Revoke()
+
+	assert.ElementsMatch(t, []string{"subject-at", "actor-at"}, revokedTokens(calls()))
+}
+
+// A failed refresh token revocation falls back to the Subject access token. Each
+// outcome is logged by token name and reason, never with a token value.
+func TestTokenSource_Revoke_RefreshFailureFallsBackToAccessToken(t *testing.T) {
+	url, calls := newRevokeRecorder(t, "subject-rt")
+	logger, hook := test.NewNullLogger()
+	ts := NewTokenSource(revokeConfig(url), initialJWT(t, time.Now().Add(time.Hour)),
+		&PKCEResult{SubjectToken: "subject-at", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"}).WithLogger(logger)
+
+	ts.Revoke()
+
+	assert.ElementsMatch(t, []string{"subject-rt", "subject-at", "actor-at"}, revokedTokens(calls()))
+	byToken := map[string]*log.Entry{}
+	for _, e := range hook.AllEntries() {
+		byToken[e.Data["token"].(string)] = e
+		for _, secret := range []string{"subject-rt", "subject-at", "actor-at"} {
+			assert.NotContains(t, fmt.Sprint(e.Message, e.Data), secret)
+		}
+	}
+	require.Len(t, byToken, 3)
+	refresh := byToken["subject_refresh_token"]
+	assert.Equal(t, "failed", refresh.Data["outcome"])
+	assert.Equal(t, "revoke endpoint returned HTTP 500", refresh.Data["reason"])
+	assert.Equal(t, log.WarnLevel, refresh.Level)
+	assert.Equal(t, "revoked", byToken["subject_access_token"].Data["outcome"])
+	assert.Equal(t, "revoked", byToken["actor_access_token"].Data["outcome"])
+}
+
+// revokeOutcomes lists "token:outcome" for each revocation that was logged.
+func revokeOutcomes(hook *test.Hook) []string {
+	var out []string
+	for _, e := range hook.AllEntries() {
+		out = append(out, fmt.Sprintf("%v:%v", e.Data["token"], e.Data["outcome"]))
+	}
+	return out
+}
+
+func TestTokenSource_Revoke_Skipped(t *testing.T) {
+	t.Run("revocation URL not configured", func(t *testing.T) {
+		logger, hook := test.NewNullLogger()
+		ts := NewTokenSource(revokeConfig(""), initialJWT(t, time.Now().Add(time.Hour)),
+			&PKCEResult{SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"}).WithLogger(logger)
+
+		ts.Revoke()
+
+		assert.ElementsMatch(t, []string{"subject_refresh_token:skipped", "actor_access_token:skipped"}, revokeOutcomes(hook))
+		assert.Equal(t, "revocation URL not configured", hook.AllEntries()[0].Data["reason"])
+	})
+
+	t.Run("no tokens held", func(t *testing.T) {
+		url, calls := newRevokeRecorder(t)
+		logger, hook := test.NewNullLogger()
+		ts := NewTokenSource(revokeConfig(url), initialJWT(t, time.Now().Add(time.Hour)), &PKCEResult{}).WithLogger(logger)
+
+		ts.Revoke()
+
+		assert.ElementsMatch(t, []string{"subject_access_token:skipped", "actor_access_token:skipped"}, revokeOutcomes(hook))
+		assert.Empty(t, calls())
+	})
+}
+
+// Revoke waits for a renewal in flight, so the refresh token that renewal
+// rotated to is the one revoked, not the one it replaced.
+func TestTokenSource_Revoke_WaitsForRenewalInFlight(t *testing.T) {
+	f := newRefreshFixture(t, buildDelegationJWT(t, "user@example.com", "mcp-server", time.Now().Add(time.Hour).Unix()))
+	f.stsDelay = 300 * time.Millisecond
+	url, calls := newRevokeRecorder(t)
+	f.cfg.RevokeURL = url
+	issuedAt, expiresAt := nearExpiry()
+	now := time.Now()
+	ts := NewTokenSource(f.cfg, initialJWT(t, now.Add(time.Minute)), &PKCEResult{
+		SubjectToken: "old-subject", SubjectRefreshToken: "old-rt", SubjectIssuedAt: issuedAt, SubjectExpiresAt: expiresAt,
+		ActorToken: "actor-access", ActorIssuedAt: now.Add(-time.Minute), ActorExpiresAt: now.Add(time.Hour),
+	})
+
+	renewed := make(chan error, 1)
+	go func() {
+		_, err := ts.Token(context.Background())
+		renewed <- err
+	}()
+	// The IdP has rotated the refresh token and the slow STS exchange is running.
+	require.Eventually(t, func() bool { return f.idpCalls.Load() == 1 }, 5*time.Second, 5*time.Millisecond)
+
+	ts.Revoke()
+
+	require.NoError(t, <-renewed)
+	assert.ElementsMatch(t, []string{"rotated-1", "actor-access"}, revokedTokens(calls()))
 }

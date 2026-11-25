@@ -30,7 +30,8 @@ type AuthConfig struct {
 	// Scopes is the list of OAuth scopes to request.
 	Scopes []string
 
-	// RevokeURL is the IdP RFC 7009 revocation endpoint, called on session end.
+	// RevokeURL is the IdP RFC 7009 revocation endpoint, called on session end and
+	// when re-authentication becomes required.
 	// Corresponds to VAULT_MCP_REVOKE_URL. Empty disables revocation.
 	RevokeURL string
 

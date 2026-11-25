@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -40,6 +42,8 @@ var ErrReauthRequired = errors.New("re-authentication required")
 // VAULT_TOKEN fallback path (auth disabled) working unchanged.
 type TokenSource struct {
 	cfg AuthConfig
+	// logger reports revocation outcomes. Nil means they are not logged.
+	logger *log.Logger
 
 	// renewSlot is a one-slot lock that lets a single renewal run at a time and,
 	// unlike a sync.Mutex, lets a waiting caller give up when its context ends.
@@ -63,6 +67,14 @@ type TokenSource struct {
 	actorExpiresAt time.Time
 	closed         bool
 	onInvalidated  func()
+}
+
+// WithLogger sets the logger used to report the outcome of each token
+// revocation, and returns s. Without this call, outcomes are not logged. Call it
+// before the source is shared.
+func (s *TokenSource) WithLogger(logger *log.Logger) *TokenSource {
+	s.logger = logger
+	return s
 }
 
 // OnInvalidated registers a callback that runs once when renewal can no longer
@@ -125,48 +137,94 @@ func (s *TokenSource) Get() *DelegationJWT {
 // revokeTimeout bounds each revocation request at the IdP.
 const revokeTimeout = 5 * time.Second
 
-// ErrRevokeNotConfigured is returned by Revoke when no revocation URL is set.
-var ErrRevokeNotConfigured = errors.New("revocation URL not configured")
+// tokenSnapshot is the set of tokens to revoke, taken when the source is closed.
+type tokenSnapshot struct {
+	subjectRefresh, subjectAccess, actorAccess string
+}
 
-// Revoke asks the IdP to revoke the Subject refresh token and the latest Actor
-// access token (RFC 7009), in parallel. The Actor has no refresh token. Each
-// token is revoked as its own application. It is best effort: both revocations
-// are always attempted, errors are returned for logging and never contain
-// token values, and the caller must still call Close.
+// Revoke asks the IdP to revoke the session's tokens (RFC 7009), logs the
+// outcome of each, and closes the source. The Subject refresh token is revoked if
+// one is held; the Subject access token only when there is no refresh token or
+// the refresh token revocation failed. The Actor has no refresh token, so its
+// latest access token is revoked. The Subject and the Actor are revoked in
+// parallel, each as its own application. It is best effort: failures are logged,
+// never returned.
 //
-// Known limitation: Revoke does not wait for a renewal that is in flight. If the
-// IdP rotates the Subject refresh token during that renewal, the new token is
-// discarded by Close without having been revoked and stays valid at the IdP until
-// it expires. To be handled when the revoke flow is reworked.
-func (s *TokenSource) Revoke() error {
-	if s == nil || s.cfg.RevokeURL == "" {
-		return ErrRevokeNotConfigured
+// Revoke first waits, without a time limit, for any renewal in flight (a renewal
+// is bounded by httpTimeout per request), so a refresh token rotated by that
+// renewal is the one revoked.
+func (s *TokenSource) Revoke() {
+	if s == nil {
+		return
 	}
-	s.mu.RLock()
-	subjectRT, actorAT := s.subjectRefreshToken, s.actorToken
-	s.mu.RUnlock()
+	s.renewSlot <- struct{}{}
+	snap := s.closeAndSnapshot()
+	<-s.renewSlot
 
-	var subjectErr, actorErr error
+	s.revokeSnapshot(snap)
+}
+
+// revokeSnapshot revokes the tokens in snap. It does not touch renewSlot, so the
+// invalidation path, which runs inside a renewal, can call it.
+func (s *TokenSource) revokeSnapshot(snap tokenSnapshot) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		subjectErr = s.revokeToken(subjectRT, "refresh_token", s.cfg.SubjectPKCEConfig(), false)
+		cfg := s.cfg.SubjectPKCEConfig()
+		if snap.subjectRefresh != "" && s.revokeOne("subject_refresh_token", snap.subjectRefresh, "refresh_token", cfg, false) == nil {
+			return
+		}
+		s.revokeOne("subject_access_token", snap.subjectAccess, "access_token", cfg, false)
 	}()
 	go func() {
 		defer wg.Done()
-		actorErr = s.revokeToken(actorAT, "access_token", s.cfg.ActorPKCEConfig(), true)
+		s.revokeOne("actor_access_token", snap.actorAccess, "access_token", s.cfg.ActorPKCEConfig(), true)
 	}()
 	wg.Wait()
+}
 
-	var errs []error
-	if subjectErr != nil {
-		errs = append(errs, fmt.Errorf("subject refresh token: %w", subjectErr))
+// revokeOne revokes a single token and logs the outcome. It returns the
+// revocation error, or nil when the token was revoked or skipped.
+func (s *TokenSource) revokeOne(name, token, hint string, cfg PKCEConfig, secretInBody bool) error {
+	if reason := s.skipReason(token); reason != "" {
+		s.logOutcome(name, "skipped", reason)
+		return nil
 	}
-	if actorErr != nil {
-		errs = append(errs, fmt.Errorf("actor access token: %w", actorErr))
+	if err := s.revokeToken(token, hint, cfg, secretInBody); err != nil {
+		s.logOutcome(name, "failed", err.Error())
+		return err
 	}
-	return errors.Join(errs...)
+	s.logOutcome(name, "revoked", "")
+	return nil
+}
+
+// skipReason says why a token is not revoked, or returns "" if it should be.
+func (s *TokenSource) skipReason(token string) string {
+	switch {
+	case token == "":
+		return "no token held"
+	case s.cfg.RevokeURL == "":
+		return "revocation URL not configured"
+	}
+	return ""
+}
+
+// logOutcome logs the token's name, the outcome and a short reason. It never
+// logs a token value.
+func (s *TokenSource) logOutcome(name, outcome, reason string) {
+	if s.logger == nil {
+		return
+	}
+	entry := s.logger.WithFields(log.Fields{"token": name, "outcome": outcome})
+	if reason != "" {
+		entry = entry.WithField("reason", reason)
+	}
+	if outcome == "failed" {
+		entry.Warn("Token revocation at IdP failed; discarding credentials anyway")
+		return
+	}
+	entry.Info("Token revocation at IdP")
 }
 
 // revokeToken posts an RFC 7009 revocation. With secretInBody the client
@@ -174,9 +232,6 @@ func (s *TokenSource) Revoke() error {
 // endpoint); otherwise a confidential client uses client_secret_basic and a
 // public client sends only client_id.
 func (s *TokenSource) revokeToken(token, hint string, cfg PKCEConfig, secretInBody bool) error {
-	if token == "" {
-		return nil
-	}
 	form := url.Values{}
 	form.Set("token", token)
 	form.Set("token_type_hint", hint)
@@ -212,12 +267,20 @@ func (s *TokenSource) Close() {
 	if s == nil {
 		return
 	}
+	s.closeAndSnapshot()
+}
+
+// closeAndSnapshot closes the source like Close and returns the tokens it held,
+// so they can still be revoked.
+func (s *TokenSource) closeAndSnapshot() tokenSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	snap := tokenSnapshot{s.subjectRefreshToken, s.subjectToken, s.actorToken}
 	s.closed = true
 	s.jwt = nil
 	s.subjectToken, s.subjectRefreshToken, s.actorToken = "", "", ""
 	s.onInvalidated = nil
+	return snap
 }
 
 // Token returns the current Delegation JWT, renewing it first when it is inside
@@ -367,13 +430,15 @@ func (s *TokenSource) subjectAccessToken() (string, error) {
 	return tok.AccessToken, nil
 }
 
-// invalidate ends the session after a failure that only a new sign-in can fix
-// and returns an error wrapping ErrReauthRequired.
+// invalidate ends the session after a failure that only a new sign-in can fix,
+// revokes its tokens at the IdP and returns an error wrapping ErrReauthRequired.
+// It runs inside a renewal, which already holds renewSlot, so it must not wait
+// for the slot.
 func (s *TokenSource) invalidate(cause error) error {
 	s.mu.RLock()
 	onInvalidated := s.onInvalidated
 	s.mu.RUnlock()
-	s.Close()
+	s.revokeSnapshot(s.closeAndSnapshot())
 	if onInvalidated != nil {
 		onInvalidated()
 	}

@@ -81,6 +81,7 @@ The server can be configured using environment variables:
 - `MCP_RATE_LIMIT_SESSION`: Per-session rate limit (format: `rps:burst`) (default: `5:10`)
 - `VAULT_MCP_SESSION_IDLE_TIMEOUT`: With `VAULT_MCP_AUTH_ENABLED=true` on HTTP, how long a signed-in session may stay idle before it ends and its credentials are revoked (default: `30m`)
 - `VAULT_MCP_SESSION_MAX_LIFETIME`: With `VAULT_MCP_AUTH_ENABLED=true` on HTTP, the longest a session may last from `initialize`, however active it is, before it ends and its credentials are revoked. Go duration syntax, so use hours for days (default: `168h`, 7 days)
+- `VAULT_MCP_REVOKE_URL`: With `VAULT_MCP_AUTH_ENABLED=true`, the identity provider's RFC 7009 token revocation endpoint (for IBM Verify, `https://<tenant>/oauth2/revoke`). When a session ends, or re-authentication becomes required, the Subject refresh token and the Actor access token are revoked there. The server logs a warning at startup if it is not set, and nothing is revoked. The Delegation JWT already issued is not revoked and stays valid at Vault until it expires.
 
 ## HTTP Mode Configuration
 

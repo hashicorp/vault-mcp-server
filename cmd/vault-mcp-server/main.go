@@ -138,6 +138,7 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 	// can authenticate from the chat instead of at server startup.
 	// When disabled, the VAULT_TOKEN fallback path is used as before.
 	if cfg.Enabled {
+		warnIfRevokeNotConfigured(cfg, logger)
 		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
 		defer closeSession()
@@ -317,6 +318,7 @@ func runStdioServer(logger *log.Logger) error {
 	tools.InitTools(hcServer, logger)
 
 	if cfg.Enabled {
+		warnIfRevokeNotConfigured(cfg, logger)
 		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
 		defer closeSession()
@@ -429,28 +431,21 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 }
 
 func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
-	// Known limitation: a tool call still running when the session ends is not
-	// cancelled. Its Vault client has its token cleared below, but if it creates
-	// a client after ClearVaultClients ran, that client holds the JWT in the cache
-	// until the next cleanup. The JWT is not revoked at Vault and expires on its own.
-	//TODO: Check this
 	return func() {
-		// Revoke first: closeLogin also closes the token source and drops its tokens.
-		ts := activeTokenSource.Swap(nil)
-		if ts != nil {
-			switch err := ts.Revoke(); {
-			case errors.Is(err, auth.ErrRevokeNotConfigured):
-				logger.Warn("VAULT_MCP_REVOKE_URL not set; tokens not revoked at IdP")
-			case err != nil:
-				logger.WithError(err).Warn("Token revocation at IdP failed; discarding credentials anyway")
-			default:
-				logger.Info("Subject refresh token and actor access token revoked at IdP")
-			}
-		}
+		// Revoke closes the token source after revoking, and waits for a renewal in
+		// flight so the newest refresh token is the one revoked.
+		activeTokenSource.Swap(nil).Revoke()
 		closeLogin()
-		ts.Close()
 		client.ClearVaultClients()
 		logger.Info("Authentication session closed; in-memory credentials discarded")
+	}
+}
+
+// warnIfRevokeNotConfigured warns once at startup when tokens could not be
+// revoked at the IdP because VAULT_MCP_REVOKE_URL is not set.
+func warnIfRevokeNotConfigured(cfg auth.AuthConfig, logger *log.Logger) {
+	if cfg.Enabled && cfg.RevokeURL == "" {
+		logger.Warn("VAULT_MCP_REVOKE_URL is not set; tokens will not be revoked at the IdP when a session ends")
 	}
 }
 

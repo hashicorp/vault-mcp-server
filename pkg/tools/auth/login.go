@@ -252,7 +252,7 @@ func (s *LoginState) complete(gen uint64, subject, actor auth.PKCEFlowResult) {
 		s.failLocked("token exchange failed", err)
 		return
 	}
-	ts := auth.NewTokenSource(s.cfg, jwt, pkceResult)
+	ts := auth.NewTokenSource(s.cfg, jwt, pkceResult).WithLogger(s.logger)
 	ts.OnInvalidated(func() { s.invalidateSession(ts) })
 	s.tokenSource = ts
 	s.phase = phaseAuthenticated
