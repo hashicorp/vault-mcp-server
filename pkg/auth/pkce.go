@@ -271,9 +271,8 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (*tokenResponse, err
 	return tok, nil
 }
 
-// postTokenForm POSTs form to an OAuth token endpoint and returns the parsed
-// response. When clientSecret is set, credentials go in the Authorization header
-// (client_secret_basic); otherwise client_id is added to the body (public client).
+// oauthTokenError is an OAuth error response (RFC 6749 §5.2) from a token
+// endpoint, such as invalid_grant.
 type oauthTokenError struct {
 	Code   string
 	Status int
@@ -283,6 +282,9 @@ func (e *oauthTokenError) Error() string {
 	return fmt.Sprintf("token endpoint error %q (HTTP %d)", e.Code, e.Status)
 }
 
+// postTokenForm POSTs form to an OAuth token endpoint and returns the parsed
+// response. When clientSecret is set, credentials go in the Authorization header
+// (client_secret_basic); otherwise client_id is added to the body (public client).
 func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*tokenResponse, error) {
 	if clientSecret == "" {
 		form.Set("client_id", clientID)

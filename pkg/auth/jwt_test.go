@@ -35,9 +35,9 @@ func TestParseUnsigned_ValidPayload(t *testing.T) {
 		{"type": "vault:path_access", "path": "secret/data/foo", "capabilities": []string{"read"}},
 	}
 	payload := map[string]interface{}{
-		"sub": "user@example.com",
-		"act": map[string]string{"sub": "mcp-server"},
-		"exp": futureExp,
+		"sub":                   "user@example.com",
+		"act":                   map[string]string{"sub": "mcp-server"},
+		"exp":                   futureExp,
 		"authorization_details": authDetails,
 	}
 
@@ -141,6 +141,7 @@ func TestParseUnsigned_ZeroExp(t *testing.T) {
 	require.NoError(t, err, "exp=0 must not trigger ErrTokenExpired")
 	require.NotNil(t, jwt)
 	assert.Equal(t, "user@example.com", jwt.Sub)
+	assert.True(t, jwt.Exp.IsZero(), "a missing exp means no expiry, not the 1970 epoch")
 }
 
 func TestParseUnsigned_RawPreserved(t *testing.T) {

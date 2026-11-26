@@ -51,8 +51,8 @@ type TokenSource struct {
 	// JWT already renewed, and a rotated Subject refresh token is never used twice.
 	renewSlot chan struct{}
 
-	// mu guards every field below. Get, Revoke, Close and the renewal steps all
-	// touch them from different goroutines. It is never held across a network call.
+	// mu guards every field below. Get, Revoke and the renewal steps all touch
+	// them from different goroutines. It is never held across a network call.
 	mu                  sync.RWMutex
 	jwt                 *DelegationJWT
 	subjectToken        string
@@ -65,8 +65,13 @@ type TokenSource struct {
 	actorToken     string
 	actorIssuedAt  time.Time
 	actorExpiresAt time.Time
-	closed         bool
-	onInvalidated  func()
+	// closed is set once the tokens have been revoked (Revoke or invalidation)
+	// and dropped. A closed source holds no tokens and never renews.
+	closed bool
+	// invalidated is set when renewal failed in a way only a new sign-in can
+	// fix. Token then keeps returning ErrReauthRequired.
+	invalidated   bool
+	onInvalidated func()
 }
 
 // WithLogger sets the logger used to report the outcome of each token
@@ -134,8 +139,9 @@ func (s *TokenSource) Get() *DelegationJWT {
 	return s.jwt
 }
 
-// revokeTimeout bounds each revocation request at the IdP.
-const revokeTimeout = 5 * time.Second
+// revokeTimeout bounds each revocation request at the IdP. It is a variable so
+// tests can shorten it.
+var revokeTimeout = 5 * time.Second
 
 // tokenSnapshot is the set of tokens to revoke, taken when the source is closed.
 type tokenSnapshot struct {
@@ -153,15 +159,23 @@ type tokenSnapshot struct {
 // Revoke first waits, without a time limit, for any renewal in flight (a renewal
 // is bounded by httpTimeout per request), so a refresh token rotated by that
 // renewal is the one revoked.
+//
+// Revoke is idempotent. On a source that is already closed (revoked before, or
+// invalidated, which revokes) it does nothing and logs nothing.
 func (s *TokenSource) Revoke() {
 	if s == nil {
 		return
 	}
 	s.renewSlot <- struct{}{}
-	snap := s.closeAndSnapshot()
+	s.mu.Lock()
+	wasClosed := s.closed
+	snap := s.closeLocked()
+	s.mu.Unlock()
 	<-s.renewSlot
 
-	s.revokeSnapshot(snap)
+	if !wasClosed {
+		s.revokeSnapshot(snap)
+	}
 }
 
 // revokeSnapshot revokes the tokens in snap. It does not touch renewSlot, so the
@@ -261,20 +275,10 @@ func (s *TokenSource) revokeToken(token, hint string, cfg PKCEConfig, secretInBo
 	return nil
 }
 
-// Close drops references to session credentials; later Token calls return nil.
-// It is idempotent; Go does not guarantee physical erasure of string storage.
-func (s *TokenSource) Close() {
-	if s == nil {
-		return
-	}
-	s.closeAndSnapshot()
-}
-
-// closeAndSnapshot closes the source like Close and returns the tokens it held,
-// so they can still be revoked.
-func (s *TokenSource) closeAndSnapshot() tokenSnapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// closeLocked closes the source, dropping its references to session
+// credentials, and returns the tokens it held so they can still be revoked. Go
+// does not guarantee physical erasure of string storage. s.mu must be held.
+func (s *TokenSource) closeLocked() tokenSnapshot {
 	snap := tokenSnapshot{s.subjectRefreshToken, s.subjectToken, s.actorToken}
 	s.closed = true
 	s.jwt = nil
@@ -283,11 +287,22 @@ func (s *TokenSource) closeAndSnapshot() tokenSnapshot {
 	return snap
 }
 
+// current returns the current JWT, or ErrReauthRequired once the source has
+// been invalidated.
+func (s *TokenSource) current() (*DelegationJWT, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.invalidated {
+		return nil, ErrReauthRequired
+	}
+	return s.jwt, nil
+}
+
 // Token returns the current Delegation JWT, renewing it first when it is inside
-// its renewal window. It returns (nil, nil) for a nil or closed source, which
+// its renewal window. It returns (nil, nil) for a nil or revoked source, which
 // callers treat as "not signed in". Renewal is single-flight: concurrent callers
 // wait for one renewal and share its result. It returns ErrReauthRequired when
-// the user has to sign in again.
+// the user has to sign in again, on that renewal and on every later call.
 //
 // A failed renewal fails the call even if the current JWT is still valid.
 // Future enhancement: keep serving the current JWT until it really expires when
@@ -297,8 +312,8 @@ func (s *TokenSource) Token(ctx context.Context) (*DelegationJWT, error) {
 	if s == nil {
 		return nil, nil
 	}
-	if jwt := s.Get(); jwt == nil || !jwtNeedsRenewal(jwt) {
-		return jwt, nil
+	if jwt, err := s.current(); err != nil || jwt == nil || !jwtNeedsRenewal(jwt) {
+		return jwt, err
 	}
 
 	// Take the renewal slot, or give up if the caller's context ends first.
@@ -309,9 +324,10 @@ func (s *TokenSource) Token(ctx context.Context) (*DelegationJWT, error) {
 	}
 	defer func() { <-s.renewSlot }()
 
-	// Another caller may have renewed while this one waited.
-	if jwt := s.Get(); jwt == nil || !jwtNeedsRenewal(jwt) {
-		return jwt, nil
+	// Another caller may have renewed, or invalidated the source, while this
+	// one waited.
+	if jwt, err := s.current(); err != nil || jwt == nil || !jwtNeedsRenewal(jwt) {
+		return jwt, err
 	}
 	return s.renew()
 }
@@ -351,7 +367,7 @@ func (s *TokenSource) renew() (*DelegationJWT, error) {
 // expiry.
 func (s *TokenSource) actorAccessToken() (string, error) {
 	// Copy what is needed under the lock and release it before the network call,
-	// so Get, Close and Revoke are never blocked by a slow IdP.
+	// so Get and Revoke are never blocked by a slow IdP.
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
@@ -432,13 +448,18 @@ func (s *TokenSource) subjectAccessToken() (string, error) {
 
 // invalidate ends the session after a failure that only a new sign-in can fix,
 // revokes its tokens at the IdP and returns an error wrapping ErrReauthRequired.
-// It runs inside a renewal, which already holds renewSlot, so it must not wait
-// for the slot.
+// Later Token calls keep returning ErrReauthRequired. It runs inside a renewal,
+// which already holds renewSlot, so it must not wait for the slot.
 func (s *TokenSource) invalidate(cause error) error {
-	s.mu.RLock()
+	s.mu.Lock()
 	onInvalidated := s.onInvalidated
-	s.mu.RUnlock()
-	s.revokeSnapshot(s.closeAndSnapshot())
+	wasClosed := s.closed
+	snap := s.closeLocked()
+	s.invalidated = true
+	s.mu.Unlock()
+	if !wasClosed {
+		s.revokeSnapshot(snap)
+	}
 	if onInvalidated != nil {
 		onInvalidated()
 	}

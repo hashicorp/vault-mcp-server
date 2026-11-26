@@ -32,7 +32,8 @@ type DelegationJWT struct {
 	Sub string
 	// Act is the actor (MCP Server) identity per RFC 8693.
 	Act ActorClaim
-	// Exp is the expiry time extracted from the exp claim.
+	// Exp is the expiry time extracted from the exp claim. It is the zero time
+	// when the claim is absent, which means the JWT does not expire.
 	Exp time.Time
 	// Iat is the issued-at time from the iat claim. When the claim is absent
 	// it falls back to the time the JWT was parsed.
@@ -77,15 +78,18 @@ func ParseUnsigned(token string) (*DelegationJWT, error) {
 		return nil, fmt.Errorf("auth: failed to parse JWT payload JSON: %w", err)
 	}
 
-	exp := time.Unix(p.Exp, 0)
 	iat := time.Now()
 	if p.Iat > 0 {
 		iat = time.Unix(p.Iat, 0)
 	}
-	// Only check expiry when exp is explicitly set (non-zero). A zero value
-	// would produce epoch time (1970) and always appear expired.
-	if p.Exp > 0 && time.Now().After(exp) {
-		return nil, ErrTokenExpired
+	// A missing exp (exp is optional in RFC 7519) leaves Exp as the zero time,
+	// which callers treat as "no expiry", rather than the 1970 epoch.
+	var exp time.Time
+	if p.Exp > 0 {
+		exp = time.Unix(p.Exp, 0)
+		if time.Now().After(exp) {
+			return nil, ErrTokenExpired
+		}
 	}
 
 	return &DelegationJWT{

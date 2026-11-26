@@ -48,3 +48,31 @@ func TestSessionCleanup_RevokesAtIdP(t *testing.T) {
 	assert.Nil(t, activeTokenSource.Load())
 	assert.Nil(t, ts.Get())
 }
+
+// In production closeLogin revokes the same source that activeTokenSource
+// holds. The second revoke must then make no request and log nothing.
+func TestSessionCleanup_RevokesOnce(t *testing.T) {
+	var mu sync.Mutex
+	var revoked []string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		revoked = append(revoked, r.PostForm.Get("token"))
+		mu.Unlock()
+	}))
+	t.Cleanup(idp.Close)
+
+	logger, hook := test.NewNullLogger()
+	ts := auth.NewTokenSource(auth.AuthConfig{RevokeURL: idp.URL},
+		&auth.DelegationJWT{Sub: "user", Exp: time.Now().Add(time.Hour), Iat: time.Now(), Raw: "the-jwt"},
+		&auth.PKCEResult{SubjectRefreshToken: "s-rt", ActorToken: "a-at"}).WithLogger(logger)
+	activeTokenSource.Store(ts)
+
+	sessionCleanup(ts.Revoke, logger)()
+
+	mu.Lock()
+	assert.Len(t, revoked, 2)
+	mu.Unlock()
+	assert.Len(t, hook.AllEntries(), 3, "two revocation lines from closeLogin, plus the session closed line")
+	assert.Nil(t, activeTokenSource.Load())
+}

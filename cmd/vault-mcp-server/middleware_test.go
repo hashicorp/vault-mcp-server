@@ -79,6 +79,12 @@ func TestJWTMiddleware_RenewalFailures(t *testing.T) {
 
 		assert.False(t, ran)
 		assert.Equal(t, "Re-authentication required. Call vault_login.", text)
+
+		// Every later call gets the same message, not "Not authenticated".
+		ran, text = callTool(t, "kv_read")
+
+		assert.False(t, ran)
+		assert.Equal(t, "Re-authentication required. Call vault_login.", text)
 	})
 
 	t.Run("transient failure does not leak details", func(t *testing.T) {

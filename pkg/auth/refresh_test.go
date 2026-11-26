@@ -116,12 +116,22 @@ func initialJWT(t *testing.T, exp time.Time) *DelegationJWT {
 	return jwt
 }
 
-func TestTokenSource_Close(t *testing.T) {
+// A second Revoke, like Revoke after invalidation, makes no request and logs
+// nothing: the tokens were already revoked when the source was first closed.
+func TestTokenSource_RevokeIsIdempotent(t *testing.T) {
 	f := newRefreshFixture(t, "unused")
+	url, calls := newRevokeRecorder(t)
+	f.cfg.RevokeURL = url
+	logger, hook := test.NewNullLogger()
 	ts := NewTokenSource(f.cfg, initialJWT(t, time.Now().Add(time.Minute)),
-		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "srt"})
-	ts.Close()
-	ts.Close()
+		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "srt"}).WithLogger(logger)
+
+	ts.Revoke()
+	first := len(hook.AllEntries())
+	ts.Revoke()
+
+	assert.Len(t, calls(), 1)
+	assert.Len(t, hook.AllEntries(), first, "the second Revoke logs nothing")
 	assert.Nil(t, ts.Get())
 	assert.Empty(t, ts.subjectToken)
 	assert.Empty(t, ts.subjectRefreshToken)
@@ -130,6 +140,20 @@ func TestTokenSource_Close(t *testing.T) {
 	assert.Nil(t, jwt)
 	assert.Zero(t, f.idpCalls.Load())
 	assert.Zero(t, f.actorCalls.Load())
+}
+
+// A JWT without exp does not expire, so it is never renewed.
+func TestTokenSource_JWTWithoutExpIsNotRenewed(t *testing.T) {
+	f := newRefreshFixture(t, "unused")
+	jwt, err := ParseUnsigned(buildDelegationJWT(t, "user@example.com", "mcp-server", 0))
+	require.NoError(t, err)
+	ts := NewTokenSource(f.cfg, jwt, &PKCEResult{SubjectRefreshToken: "srt"})
+
+	got, err := ts.Token(context.Background())
+
+	require.NoError(t, err)
+	assert.Same(t, jwt, got)
+	assert.Zero(t, f.idpCalls.Load()+f.actorCalls.Load()+f.stsCalls.Load())
 }
 
 func TestTokenSource_RenewsWithinWindow(t *testing.T) {
@@ -215,14 +239,17 @@ func TestTokenSource_TransientFailureReturnsError(t *testing.T) {
 }
 
 func TestTokenSource_InvalidGrantRequiresReauthentication(t *testing.T) {
+	var idpCalls atomic.Int32
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		idpCalls.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, `{"error":"invalid_grant"}`)
 	}))
 	t.Cleanup(idp.Close)
 	revokeURL, calls := newRevokeRecorder(t)
+	logger, hook := test.NewNullLogger()
 	ts := NewTokenSource(AuthConfig{TokenURL: idp.URL, RevokeURL: revokeURL}, initialJWT(t, time.Now().Add(time.Minute)),
-		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"})
+		&PKCEResult{SubjectToken: "subject", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"}).WithLogger(logger)
 	invalidated := false
 	ts.OnInvalidated(func() { invalidated = true })
 
@@ -235,6 +262,16 @@ func TestTokenSource_InvalidGrantRequiresReauthentication(t *testing.T) {
 	assert.Empty(t, ts.subjectToken)
 	// Invalidation revokes what the session still holds.
 	assert.ElementsMatch(t, []string{"subject-rt", "actor-at"}, revokedTokens(calls()))
+
+	// Later calls keep asking for a new sign-in without contacting the IdP, and
+	// the revocation at session end has nothing left to do.
+	logged := len(hook.AllEntries())
+	_, err = ts.Token(context.Background())
+	require.ErrorIs(t, err, ErrReauthRequired)
+	ts.Revoke()
+	assert.EqualValues(t, 1, idpCalls.Load())
+	assert.Len(t, calls(), 2)
+	assert.Len(t, hook.AllEntries(), logged)
 }
 
 // A rejected actor client is a configuration problem: the JWT is kept and no
@@ -609,4 +646,28 @@ func TestTokenSource_Revoke_WaitsForRenewalInFlight(t *testing.T) {
 
 	require.NoError(t, <-renewed)
 	assert.ElementsMatch(t, []string{"rotated-1", "actor-access"}, revokedTokens(calls()))
+}
+
+// Each revocation request is bounded by revokeTimeout. A hung endpoint is
+// logged as failed, and with the Subject fallback the Subject side makes two
+// sequential requests, so Revoke returns in about twice the timeout.
+func TestTokenSource_Revoke_Timeout(t *testing.T) {
+	old := revokeTimeout
+	revokeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { revokeTimeout = old })
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	logger, hook := test.NewNullLogger()
+	ts := NewTokenSource(revokeConfig(srv.URL), initialJWT(t, time.Now().Add(time.Hour)),
+		&PKCEResult{SubjectToken: "subject-at", SubjectRefreshToken: "subject-rt", ActorToken: "actor-at"}).WithLogger(logger)
+
+	start := time.Now()
+	ts.Revoke()
+
+	assert.Less(t, time.Since(start), time.Second)
+	assert.ElementsMatch(t,
+		[]string{"subject_refresh_token:failed", "subject_access_token:failed", "actor_access_token:failed"},
+		revokeOutcomes(hook))
 }

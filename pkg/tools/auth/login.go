@@ -65,20 +65,25 @@ func NewLoginTools(cfg auth.AuthConfig, onReady func(*auth.TokenSource), logger 
 	return s.loginTool(), s.authStatusTool(), s.Close
 }
 
-// Close cancels pending login flows and clears the process-wide working session.
+// Close cancels pending login flows, clears the process-wide working session
+// and revokes its tokens at the IdP. It must be called without s.mu held. A
+// login still finishing when Close runs sees its attempt cancelled and revokes
+// its own tokens (see discard).
 func (s *LoginState) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closeLocked()
+	ts := s.closeLocked()
+	s.mu.Unlock()
+	ts.Revoke()
 }
 
-func (s *LoginState) closeLocked() {
+// closeLocked ends the login and returns the token source it held, which the
+// caller revokes once s.mu is released (revocation does network I/O).
+func (s *LoginState) closeLocked() *auth.TokenSource {
 	s.resetFlowLocked()
 	s.phase = phaseLoggedOut
-	if s.tokenSource != nil {
-		s.tokenSource.Close()
-		s.tokenSource = nil
-	}
+	ts := s.tokenSource
+	s.tokenSource = nil
+	return ts
 }
 
 // resetFlowLocked cancels pending browser flows and invalidates their goroutines.
@@ -99,6 +104,9 @@ func (s *LoginState) failLocked(reason string, err error) {
 	s.lastFailure = reason
 }
 
+// invalidateSession runs when ts can no longer be renewed. ts has already
+// revoked its tokens, and this runs inside its renewal, so ts is only dropped,
+// not revoked again.
 func (s *LoginState) invalidateSession(ts *auth.TokenSource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,6 +117,29 @@ func (s *LoginState) invalidateSession(ts *auth.TokenSource) {
 	s.phase = phaseReauthRequired
 	client.ClearVaultClients()
 	s.logger.Warn("Renewal authorization ended; re-authentication required")
+}
+
+// discard revokes the IdP tokens of a login attempt that will not complete
+// (cancelled, or failed after the human sign-in). It must be called without
+// s.mu held.
+func (s *LoginState) discard(tokens *auth.PKCEResult) {
+	auth.NewTokenSource(s.cfg, nil, tokens).WithLogger(s.logger).Revoke()
+}
+
+// loginTokens collects the IdP tokens of a login attempt. actor may have failed,
+// in which case only the Subject tokens are included.
+func loginTokens(subject, actor auth.PKCEFlowResult) *auth.PKCEResult {
+	tokens := &auth.PKCEResult{
+		SubjectToken:        subject.Token.AccessToken,
+		SubjectRefreshToken: subject.Token.RefreshToken,
+		SubjectIssuedAt:     subject.Token.IssuedAt,
+		SubjectExpiresAt:    subject.Token.ExpiresAt,
+	}
+	if actor.Err == nil && actor.Token != nil {
+		tokens.ActorToken = actor.Token.AccessToken
+		tokens.ActorIssuedAt, tokens.ActorExpiresAt = actor.Token.IssuedAt, actor.Token.ExpiresAt
+	}
+	return tokens
 }
 
 // ToolDef pairs an mcp.Tool with its handler, matching the pattern used in this repo.
@@ -176,7 +207,11 @@ func (s *LoginState) status() string {
 	switch s.phase {
 	case phaseAuthenticated:
 		if jwt := s.tokenSource.Get(); jwt != nil {
-			return fmt.Sprintf("Authenticated. sub=%s exp=%s", jwt.Sub, jwt.Exp.Format("2006-01-02T15:04:05Z07:00"))
+			exp := "none"
+			if !jwt.Exp.IsZero() {
+				exp = jwt.Exp.Format("2006-01-02T15:04:05Z07:00")
+			}
+			return fmt.Sprintf("Authenticated. sub=%s exp=%s", jwt.Sub, exp)
 		}
 		return "Authenticated."
 	case phaseCompleting:
@@ -200,6 +235,9 @@ func (s *LoginState) waitForSubject(gen uint64, ch <-chan auth.PKCEFlowResult) {
 	s.mu.Lock()
 	if s.gen != gen {
 		s.mu.Unlock()
+		if subject.Err == nil {
+			s.discard(loginTokens(subject, auth.PKCEFlowResult{Err: context.Canceled}))
+		}
 		return
 	}
 	if subject.Err != nil {
@@ -216,43 +254,39 @@ func (s *LoginState) waitForSubject(gen uint64, ch <-chan auth.PKCEFlowResult) {
 }
 
 // complete runs the STS exchange with both identities' tokens and publishes the
-// TokenSource. It must be called without s.mu held.
+// TokenSource. It must be called without s.mu held. If the attempt was cancelled
+// or fails, the IdP tokens it obtained are revoked.
 func (s *LoginState) complete(gen uint64, subject, actor auth.PKCEFlowResult) {
+	tokens := loginTokens(subject, actor)
 	s.mu.Lock()
 	if s.gen != gen {
 		s.mu.Unlock()
+		s.discard(tokens)
 		return
 	}
 	if actor.Err != nil {
 		s.failLocked("agent sign-in failed", actor.Err)
 		s.mu.Unlock()
+		s.discard(tokens)
 		return
 	}
 	s.mu.Unlock()
-	pkceResult := &auth.PKCEResult{
-		SubjectToken:        subject.Token.AccessToken,
-		SubjectRefreshToken: subject.Token.RefreshToken,
-		SubjectIssuedAt:     subject.Token.IssuedAt,
-		SubjectExpiresAt:    subject.Token.ExpiresAt,
-		ActorToken:          actor.Token.AccessToken,
-		ActorIssuedAt:       actor.Token.IssuedAt,
-		ActorExpiresAt:      actor.Token.ExpiresAt,
-	}
 	jwt, err := auth.ExchangeTokens(
-		pkceResult.SubjectToken, pkceResult.ActorToken,
+		tokens.SubjectToken, tokens.ActorToken,
 		s.cfg.STSEndpoint, s.cfg.STSClientID, s.cfg.STSClientSecret, s.cfg.STSAuthorizationDetails,
 	)
 
 	s.mu.Lock()
+	if s.gen != gen || err != nil {
+		if s.gen == gen {
+			s.failLocked("token exchange failed", err)
+		}
+		s.mu.Unlock()
+		s.discard(tokens)
+		return
+	}
 	defer s.mu.Unlock()
-	if s.gen != gen {
-		return
-	}
-	if err != nil {
-		s.failLocked("token exchange failed", err)
-		return
-	}
-	ts := auth.NewTokenSource(s.cfg, jwt, pkceResult).WithLogger(s.logger)
+	ts := auth.NewTokenSource(s.cfg, jwt, tokens).WithLogger(s.logger)
 	ts.OnInvalidated(func() { s.invalidateSession(ts) })
 	s.tokenSource = ts
 	s.phase = phaseAuthenticated

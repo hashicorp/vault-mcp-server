@@ -141,9 +141,9 @@ func runHTTPServer(logger *log.Logger, host string, port string, endpointPath st
 		warnIfRevokeNotConfigured(cfg, logger)
 		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
 		closeSession := sessionCleanup(closeLogin, logger)
-		defer closeSession()
 		// Auth state is process-wide, so M1 admits one session at a time. The
-		// session limit handler ends it on DELETE and at shutdown.
+		// slot runs closeSession whenever a session ends (DELETE, idle, max
+		// lifetime), and Shutdown ends the active one when the server stops.
 		slot = session.NewSlot(sessionConfigFromEnv(logger), func(string, string) { closeSession() }, logger)
 		defer slot.Shutdown(session.ReasonShutdown)
 	}
@@ -432,10 +432,13 @@ func NewServer(version string, logger *log.Logger, tokenSource *auth.TokenSource
 
 func sessionCleanup(closeLogin func(), logger *log.Logger) func() {
 	return func() {
-		// Revoke closes the token source after revoking, and waits for a renewal in
-		// flight so the newest refresh token is the one revoked.
-		activeTokenSource.Swap(nil).Revoke()
+		// closeLogin first: it cancels a login still finishing, so nothing new can
+		// be published after this point, and revokes the published token source
+		// (waiting for a renewal in flight so the newest refresh token is the one
+		// revoked). Revoking activeTokenSource afterwards is then a no-op, unless
+		// it was somehow not the login's source.
 		closeLogin()
+		activeTokenSource.Swap(nil).Revoke()
 		client.ClearVaultClients()
 		logger.Info("Authentication session closed; in-memory credentials discarded")
 	}

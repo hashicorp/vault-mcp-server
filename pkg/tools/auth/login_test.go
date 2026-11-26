@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,11 +46,37 @@ type loginFixture struct {
 	grants chan string
 	// actorStatus lets a test make the IdP reject the actor client.
 	actorStatus int
+	// stsStatus lets a test make the STS fail; stsHold, when set, holds the STS
+	// response until it is closed.
+	stsStatus int
+	stsHold   chan struct{}
+	stsCalled chan struct{}
+
+	revokeMu sync.Mutex
+	revoked  []string
+}
+
+// revokedTokens returns the tokens the fake IdP revocation endpoint received.
+func (f *loginFixture) revokedTokens() []string {
+	f.revokeMu.Lock()
+	defer f.revokeMu.Unlock()
+	return slices.Clone(f.revoked)
+}
+
+func (f *loginFixture) waitRevoked(t *testing.T, tokens ...string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		got := f.revokedTokens()
+		slices.Sort(got)
+		want := slices.Clone(tokens)
+		slices.Sort(want)
+		return slices.Equal(got, want)
+	}, 5*time.Second, 10*time.Millisecond, "revoked: %v", f.revokedTokens())
 }
 
 func newLoginFixture(t *testing.T) *loginFixture {
 	t.Helper()
-	f := &loginFixture{grants: make(chan string, 10), actorStatus: http.StatusOK}
+	f := &loginFixture{grants: make(chan string, 10), actorStatus: http.StatusOK, stsCalled: make(chan struct{}, 10)}
 
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())
@@ -75,9 +103,25 @@ func newLoginFixture(t *testing.T) *loginFixture {
 		require.NoError(t, r.ParseForm())
 		assert.Equal(t, "subject-at", r.PostForm.Get("subject_token"))
 		assert.Equal(t, "actor-at", r.PostForm.Get("actor_token"))
+		f.stsCalled <- struct{}{}
+		if f.stsHold != nil {
+			<-f.stsHold
+		}
+		if f.stsStatus != 0 {
+			http.Error(w, "sts unavailable", f.stsStatus)
+			return
+		}
 		fmt.Fprintf(w, `{"access_token":%q}`, jwt)
 	}))
 	t.Cleanup(sts.Close)
+
+	revoke := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		f.revokeMu.Lock()
+		f.revoked = append(f.revoked, r.PostForm.Get("token"))
+		f.revokeMu.Unlock()
+	}))
+	t.Cleanup(revoke.Close)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -93,6 +137,7 @@ func newLoginFixture(t *testing.T) *loginFixture {
 		TokenURL:          idp.URL,
 		RedirectURL:       fmt.Sprintf("http://127.0.0.1:%d/callback", port),
 		STSEndpoint:       sts.URL,
+		RevokeURL:         revoke.URL,
 		Deadline:          time.Minute,
 	}
 
@@ -190,4 +235,49 @@ func TestLogin_ActorFailureReturnsToLoggedOut(t *testing.T) {
 	signIn(t, loginText(t, s), "")
 	waitStatus(t, s, "last sign-in failed: agent sign-in failed")
 	assert.Zero(t, f.ready)
+	// The human sign-in already produced a refresh token; it must not be left live.
+	f.waitRevoked(t, "rt")
+}
+
+func TestLogin_STSFailureRevokesTokens(t *testing.T) {
+	f := newLoginFixture(t)
+	f.stsStatus = http.StatusServiceUnavailable
+	s := f.state
+
+	signIn(t, loginText(t, s), "")
+	waitStatus(t, s, "last sign-in failed: token exchange failed")
+	assert.Zero(t, f.ready)
+	f.waitRevoked(t, "rt", "actor-at")
+}
+
+// A session that ends while the login is finishing (STS exchange in flight)
+// must not publish the result, and the tokens obtained so far are revoked.
+func TestLogin_SessionEndDuringCompletionRevokesTokens(t *testing.T) {
+	f := newLoginFixture(t)
+	f.stsHold = make(chan struct{})
+	s := f.state
+
+	signIn(t, loginText(t, s), "")
+	<-f.stsCalled
+	assert.Contains(t, s.status(), "finishing")
+
+	s.Close()
+	close(f.stsHold)
+
+	f.waitRevoked(t, "rt", "actor-at")
+	assert.Zero(t, f.ready)
+	assert.Contains(t, s.status(), "Not authenticated")
+}
+
+// Close revokes the published token source at the IdP.
+func TestLogin_CloseRevokesPublishedSource(t *testing.T) {
+	f := newLoginFixture(t)
+	s := f.state
+	signIn(t, loginText(t, s), "")
+	waitStatus(t, s, "Authenticated.")
+
+	s.Close()
+
+	f.waitRevoked(t, "rt", "actor-at")
+	assert.Contains(t, s.status(), "Not authenticated")
 }
