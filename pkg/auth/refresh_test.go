@@ -671,3 +671,28 @@ func TestTokenSource_Revoke_Timeout(t *testing.T) {
 		[]string{"subject_refresh_token:failed", "subject_access_token:failed", "actor_access_token:failed"},
 		revokeOutcomes(hook))
 }
+
+// A full renewal is logged through the source's logger, one line per step, and
+// never with a token value.
+func TestTokenSource_RenewalIsLogged(t *testing.T) {
+	newRaw := buildDelegationJWT(t, "user@example.com", "mcp-server", time.Now().Add(time.Hour).Unix())
+	f := newRefreshFixture(t, newRaw)
+	logger, hook := test.NewNullLogger()
+	issuedAt, expiresAt := nearExpiry()
+	ts := NewTokenSource(f.cfg, initialJWT(t, time.Now().Add(time.Minute)), &PKCEResult{
+		SubjectToken: "old-subject", SubjectRefreshToken: "old-rt", SubjectIssuedAt: issuedAt, SubjectExpiresAt: expiresAt,
+	}).WithLogger(logger)
+
+	_, err := ts.Token(context.Background())
+
+	require.NoError(t, err)
+	var msgs []string
+	for _, e := range hook.AllEntries() {
+		msgs = append(msgs, e.Message)
+		for _, secret := range []string{"old-rt", "rotated-1", "subject-access", "actor-access", newRaw} {
+			assert.NotContains(t, fmt.Sprint(e.Message, e.Data), secret)
+		}
+	}
+	assert.Equal(t, []string{"Subject access token refreshed", "Actor access token renewed", "Delegation JWT renewed"}, msgs)
+	assert.Equal(t, true, hook.AllEntries()[0].Data["refresh_token_rotated"])
+}

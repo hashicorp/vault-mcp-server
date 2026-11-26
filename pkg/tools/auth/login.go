@@ -245,6 +245,7 @@ func (s *LoginState) waitForSubject(gen uint64, ch <-chan auth.PKCEFlowResult) {
 		s.mu.Unlock()
 		return
 	}
+	s.logger.WithField("refresh_token", subject.Token.RefreshToken != "").Info("vault_login: human sign-in complete")
 	s.phase = phaseCompleting
 	s.pendingURL = ""
 	s.mu.Unlock()

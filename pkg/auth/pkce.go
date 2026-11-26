@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -26,6 +25,28 @@ var httpTimeout = 10 * time.Second
 // httpClient is used for every IdP token endpoint and STS request.
 func httpClient() *http.Client {
 	return &http.Client{Timeout: httpTimeout}
+}
+
+// maxErrorBody bounds how much of an upstream error response is kept in an
+// error message, and so in the logs.
+const maxErrorBody = 256
+
+// truncateBody returns raw as a string, cut to maxErrorBody bytes.
+func truncateBody(raw []byte) string {
+	if len(raw) <= maxErrorBody {
+		return string(raw)
+	}
+	return string(raw[:maxErrorBody]) + "...(truncated)"
+}
+
+// isLoopbackHost reports whether host (without port) is localhost or a
+// loopback IP address.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // generateState creates a cryptographically random 16-byte CSRF state token
@@ -136,6 +157,12 @@ func StartPKCEFlow(ctx context.Context, cfg PKCEConfig, label string) (authURL s
 	if err != nil {
 		cancel()
 		return "", nil, fmt.Errorf("parsing redirect URL: %w", err)
+	}
+	// The callback listener binds to this host, and the authorization code
+	// arrives on it, so it must never listen beyond this machine.
+	if !isLoopbackHost(redirURL.Hostname()) {
+		cancel()
+		return "", nil, fmt.Errorf("redirect URL must use a loopback host (localhost, 127.0.0.1 or ::1); got %q", redirURL.Hostname())
 	}
 	callbackPath := redirURL.Path
 	if callbackPath == "" {
@@ -267,7 +294,6 @@ func exchangeCode(cfg PKCEConfig, code, verifier, _ string) (*tokenResponse, err
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token exchange successful (refresh_token=%t)\n", tok.RefreshToken != "")
 	return tok, nil
 }
 
@@ -312,14 +338,13 @@ func postTokenForm(tokenURL, clientID, clientSecret string, form url.Values) (*t
 	if err != nil {
 		return nil, fmt.Errorf("reading token response: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Token endpoint response (HTTP %d)\n", resp.StatusCode)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var tok tokenResponse
 		if resp.StatusCode < 500 && json.Unmarshal(raw, &tok) == nil && tok.Error != "" {
 			return nil, &oauthTokenError{Code: tok.Error, Status: resp.StatusCode}
 		}
-		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, truncateBody(raw))
 	}
 
 	var tok tokenResponse

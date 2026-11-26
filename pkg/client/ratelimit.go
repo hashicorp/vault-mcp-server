@@ -140,7 +140,7 @@ func (m *RateLimitMiddleware) Middleware() server.ToolHandlerMiddleware {
 			if sessionID := getSessionIDFromContext(ctx); sessionID != "" {
 				sessionLimiter := m.getSessionLimiter(sessionID)
 				if !sessionLimiter.Allow() {
-					m.logger.Warnf("Session rate limit exceeded for session: %s, tool: %s", sessionID, toolName)
+					m.logger.Warnf("Session rate limit exceeded for tool: %s", toolName)
 					return nil, errors.New("rate limit exceeded: too many requests from this session")
 				}
 			}

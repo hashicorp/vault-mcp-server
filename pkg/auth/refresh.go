@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -358,8 +357,16 @@ func (s *TokenSource) renew() (*DelegationJWT, error) {
 	s.jwt = jwt
 	s.mu.Unlock()
 
-	fmt.Fprintf(os.Stderr, "[vault-mcp-server] Delegation JWT renewed (sub=%s, act=%s, exp=%s)\n", jwt.Sub, jwt.Act.Sub, jwt.Exp.Format(time.RFC3339))
+	s.logInfo("Delegation JWT renewed", log.Fields{"sub": jwt.Sub, "act": jwt.Act.Sub, "exp": jwt.Exp.Format(time.RFC3339)})
 	return jwt, nil
+}
+
+// logInfo logs msg with fields when a logger is set. Callers never pass token
+// values.
+func (s *TokenSource) logInfo(msg string, fields log.Fields) {
+	if s.logger != nil {
+		s.logger.WithFields(fields).Info(msg)
+	}
 }
 
 // actorAccessToken returns the Actor access token for the STS exchange, getting
@@ -392,6 +399,7 @@ func (s *TokenSource) actorAccessToken() (string, error) {
 	}
 	s.actorToken = actor.Token.AccessToken
 	s.actorIssuedAt, s.actorExpiresAt = actor.Token.IssuedAt, actor.Token.ExpiresAt
+	s.logInfo("Actor access token renewed", nil)
 	return s.actorToken, nil
 }
 
@@ -443,6 +451,7 @@ func (s *TokenSource) subjectAccessToken() (string, error) {
 		s.subjectRefreshToken = tok.RefreshToken
 	}
 	s.subjectIssuedAt, s.subjectExpiresAt = tok.IssuedAt, tok.ExpiresAt
+	s.logInfo("Subject access token refreshed", log.Fields{"refresh_token_rotated": tok.RefreshToken != ""})
 	return tok.AccessToken, nil
 }
 

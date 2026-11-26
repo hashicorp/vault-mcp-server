@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -320,7 +321,9 @@ func runStdioServer(logger *log.Logger) error {
 	if cfg.Enabled {
 		warnIfRevokeNotConfigured(cfg, logger)
 		closeLogin := tools.InitLoginTools(hcServer, cfg, activeTokenSource.Store, logger)
-		closeSession := sessionCleanup(closeLogin, logger)
+		// Stdio has one session per process, and both the unregister hook and
+		// the defer end it, so the cleanup runs once.
+		closeSession := sync.OnceFunc(sessionCleanup(closeLogin, logger))
 		defer closeSession()
 		hcServer.GetHooks().AddOnUnregisterSession(func(context.Context, server.ClientSession) { closeSession() })
 	}

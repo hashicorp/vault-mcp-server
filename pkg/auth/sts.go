@@ -98,7 +98,7 @@ func ExchangeTokens(subjectToken, actorToken, stsEndpoint, clientID, clientSecre
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("auth: STS returned HTTP %d: %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("auth: STS returned HTTP %d: %s", resp.StatusCode, truncateBody(raw))
 	}
 
 	// tokenResponse is defined in pkce.go (same package).

@@ -168,7 +168,7 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 		return nil, fmt.Errorf("no active session")
 	}
 
-	logger.WithField("session_id", session.SessionID()).Debug("Retrieving Vault client for session")
+	logger.Debug("Retrieving Vault client for session")
 
 	// JWT path: expiry check happens before any cache lookup.
 	if jwt, ok := DelegationJWTFromContext(ctx); ok {
@@ -195,11 +195,11 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 
 		// Token mismatch: rebuild client with current token instead of
 		// reusing cached client. Vault will reject invalid tokens.
-		logger.WithField("session_id", session.SessionID()).Info("Vault token for session changed; rebuilding client")
+		logger.Info("Vault token for session changed; rebuilding client")
 		return CreateVaultClientForSession(ctx, session, logger)
 	}
 
-	logger.WithField("session_id", session.SessionID()).Warn("Vault client not found, creating a new one")
+	logger.Warn("Vault client not found, creating a new one")
 	return CreateVaultClientForSession(ctx, session, logger)
 }
 
@@ -218,33 +218,65 @@ func WithVaultToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, contextKey(VaultToken), token)
 }
 
-func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
+// requestOverridesEnv reports whether the request context carries a Vault
+// address, token, namespace or TLS setting that differs from the server's
+// environment, which means it came from a request header.
+func requestOverridesEnv(ctx context.Context) bool {
+	for _, key := range []string{VaultAddress, VaultToken, VaultNamespace, VaultSkipTLSVerify} {
+		if v, ok := ctx.Value(contextKey(key)).(string); ok && v != "" && v != os.Getenv(key) {
+			return true
+		}
+	}
+	return false
+}
 
-	// Initialize a new Vault client for this session
+// envSkipTLSVerify reads VAULT_SKIP_VERIFY from the environment (default false).
+func envSkipTLSVerify(logger *log.Logger) bool {
+	envVal := getEnv(VaultSkipTLSVerify, "false")
+	parsed, err := strconv.ParseBool(envVal)
+	if err != nil {
+		logger.WithField("value", envVal).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
+		return false
+	}
+	return parsed
+}
+
+// createDelegatedClient builds the Vault client for the agentic auth path: the
+// Delegation JWT is the Vault token and the audit header carries sub and act.
+// The Vault address and namespace come from the server's environment only.
+// Request headers are ignored, otherwise any request carrying the session ID
+// could send the Delegation JWT to a host of its choosing. TLS is always
+// verified: VAULT_SKIP_VERIFY does not apply to the JWT.
+func createDelegatedClient(ctx context.Context, session server.ClientSession, jwt *auth.DelegationJWT, logger *log.Logger) (*api.Client, error) {
+	if requestOverridesEnv(ctx) {
+		logger.Warn("Vault address, token, namespace and TLS request headers are ignored with VAULT_MCP_AUTH_ENABLED; using the server's environment")
+	}
+	vaultAddress := getEnv(VaultAddress, DefaultVaultAddress)
+	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, false, jwt.Raw, getEnv(VaultNamespace, ""))
+	if err != nil {
+		return nil, fmt.Errorf("NewVaultClient failed (JWT path): %v", err)
+	}
+	newClient.AddHeader(VaultAuditDataHeader, auditHeaderValue(jwt))
+
+	logger.WithFields(log.Fields{
+		"vault_addr": vaultAddress,
+		"sub":        jwt.Sub,
+		"act":        jwt.Act.Sub,
+	}).Info("Created Vault client for session (JWT delegation path)")
+	return newClient, nil
+}
+
+func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
+	if jwt, ok := DelegationJWTFromContext(ctx); ok {
+		return createDelegatedClient(ctx, session, jwt, logger)
+	}
+
+	// VAULT_TOKEN path: request headers take precedence over the environment.
 	vaultAddress, ok := ctx.Value(contextKey(VaultAddress)).(string)
 	if !ok || vaultAddress == "" {
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
-	// JWT path: use the raw JWT string as the Vault token and inject audit header.
-	if jwt, ok := DelegationJWTFromContext(ctx); ok {
-		newClient, err := NewVaultClient(session.SessionID(), vaultAddress, false, jwt.Raw, "")
-		if err != nil {
-			return nil, fmt.Errorf("NewVaultClient failed (JWT path): %v", err)
-		}
-		newClient.AddHeader(VaultAuditDataHeader, auditHeaderValue(jwt))
-
-		logger.WithFields(log.Fields{
-			"session_id": session.SessionID(),
-			"vault_addr": vaultAddress,
-			"sub":        jwt.Sub,
-			"act":        jwt.Act.Sub,
-		}).Info("Created Vault client for session (JWT delegation path)")
-
-		return newClient, nil
-	}
-
-	// VAULT_TOKEN path: existing logic unchanged.
 	vaultToken := resolveVaultToken(ctx)
 	if vaultToken == "" {
 		return nil, fmt.Errorf("vault token not provided for session")
@@ -263,10 +295,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		if ok {
 			parsed, err := strconv.ParseBool(skipTLSStr)
 			if err != nil {
-				logger.WithFields(log.Fields{
-					"session_id": session.SessionID(),
-					"value":      skipTLSStr,
-				}).Warn("Invalid boolean value for VaultSkipTLSVerify in context; falling back to VAULT_SKIP_VERIFY or its default")
+				logger.WithField("value", skipTLSStr).Warn("Invalid boolean value for VaultSkipTLSVerify in context; falling back to VAULT_SKIP_VERIFY or its default")
 			} else {
 				vaultSkipTLSVerify = parsed
 				skipProvidedInContext = true
@@ -274,16 +303,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		}
 	}
 	if !skipProvidedInContext {
-		envVal := getEnv(VaultSkipTLSVerify, "false")
-		parsed, err := strconv.ParseBool(envVal)
-		if err != nil {
-			logger.WithFields(log.Fields{
-				"session_id": session.SessionID(),
-				"value":      envVal,
-			}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
-		} else {
-			vaultSkipTLSVerify = parsed
-		}
+		vaultSkipTLSVerify = envSkipTLSVerify(logger)
 	}
 
 	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken, vaultNamespace)
@@ -291,10 +311,7 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		return nil, fmt.Errorf("NewVaultClient failed to create Vault client: %v", err)
 	}
 
-	logger.WithFields(log.Fields{
-		"session_id": session.SessionID(),
-		"vault_addr": vaultAddress,
-	}).Info("Created Vault client for session")
+	logger.WithField("vault_addr", vaultAddress).Info("Created Vault client for session")
 
 	return newClient, nil
 }
@@ -307,7 +324,7 @@ func NewSessionHandler(ctx context.Context, session server.ClientSession, logger
 	_, hasJWT := DelegationJWTFromContext(ctx)
 	token := resolveVaultToken(ctx)
 	if !hasJWT && token == "" {
-		logger.WithField("session_id", session.SessionID()).Debug("NewSessionHandler: no credentials yet, deferring Vault client creation")
+		logger.Debug("NewSessionHandler: no credentials yet, deferring Vault client creation")
 		return
 	}
 	_, err := CreateVaultClientForSession(ctx, session, logger)
@@ -319,5 +336,5 @@ func NewSessionHandler(ctx context.Context, session server.ClientSession, logger
 // EndSessionHandler cleans up the Vault client when the session ends
 func EndSessionHandler(_ context.Context, session server.ClientSession, logger *log.Logger) {
 	DeleteVaultClient(session.SessionID())
-	logger.WithField("session_id", session.SessionID()).Info("Cleaned up Vault client for session")
+	logger.Info("Cleaned up Vault client for session")
 }

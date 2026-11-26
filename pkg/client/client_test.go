@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/vault/api"
 	"github.com/mark3labs/mcp-go/mcp"
 	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -692,4 +693,68 @@ func TestGetVaultClientFromContext_ExpiredJWT_ReturnsError(t *testing.T) {
 	assert.True(t, isJWTExpired(expiredJWT),
 		"isJWTExpired must return true for a past exp")
 	_ = ctx // context is set up correctly; the guard fires before the session lookup
+}
+
+// With a Delegation JWT, the Vault address and namespace come from the server's
+// environment only. A request header must not be able to send the JWT to
+// another host.
+func TestCreateVaultClientForSession_JWTIgnoresRequestOverrides(t *testing.T) {
+	logger, hook := test.NewNullLogger()
+	var gotToken, gotNamespace string
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken, gotNamespace = r.Header.Get("X-Vault-Token"), r.Header.Get("X-Vault-Namespace")
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(vault.Close)
+	t.Setenv(VaultAddress, vault.URL)
+	t.Setenv(VaultNamespace, "env-ns")
+	t.Setenv(VaultToken, "")
+
+	jwt := &auth.DelegationJWT{Sub: "user", Act: auth.ActorClaim{Sub: "agent"}, Exp: time.Now().Add(time.Hour), Raw: "the-jwt"}
+	ctx := WithDelegationJWT(context.Background(), jwt)
+	ctx = context.WithValue(ctx, contextKey(VaultAddress), "https://attacker.invalid")
+	ctx = context.WithValue(ctx, contextKey(VaultNamespace), "header-ns")
+	ctx = WithVaultToken(ctx, "header-token")
+
+	session := &mockClientSession{id: "test-jwt-overrides"}
+	c, err := CreateVaultClientForSession(ctx, session, logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { DeleteVaultClient(session.id) })
+
+	assert.Equal(t, vault.URL, c.Address())
+	_, err = c.RawRequest(c.NewRequest("GET", "/v1/sys/health"))
+	require.NoError(t, err)
+	assert.Equal(t, "the-jwt", gotToken)
+	assert.Equal(t, "env-ns", gotNamespace)
+
+	var warned bool
+	for _, e := range hook.AllEntries() {
+		warned = warned || e.Level == log.WarnLevel
+		assert.NotContains(t, e.Data, "session_id")
+	}
+	assert.True(t, warned, "ignoring request headers is logged")
+}
+
+// The Delegation JWT is only sent over verified TLS: VAULT_SKIP_VERIFY does
+// not apply to it.
+func TestCreateVaultClientForSession_JWTAlwaysVerifiesTLS(t *testing.T) {
+	logger, _ := test.NewNullLogger()
+	called := false
+	vault := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(vault.Close)
+	t.Setenv(VaultAddress, vault.URL)
+	t.Setenv(VaultSkipTLSVerify, "true")
+
+	jwt := &auth.DelegationJWT{Sub: "user", Exp: time.Now().Add(time.Hour), Raw: "the-jwt"}
+	session := &mockClientSession{id: "test-jwt-tls"}
+	c, err := CreateVaultClientForSession(WithDelegationJWT(context.Background(), jwt), session, logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { DeleteVaultClient(session.id) })
+
+	_, err = c.RawRequest(c.NewRequest("GET", "/v1/sys/health"))
+	require.ErrorContains(t, err, "certificate")
+	assert.False(t, called, "the JWT never reaches a server with an unverified certificate")
 }

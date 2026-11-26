@@ -4,6 +4,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -209,4 +210,33 @@ func TestPostTokenForm_TimesOut(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 2*time.Second)
+}
+
+// The callback listener must only ever bind to this machine.
+func TestStartPKCEFlow_RejectsNonLoopbackRedirect(t *testing.T) {
+	for _, redirect := range []string{
+		"http://0.0.0.0:49997/callback",
+		"http://192.168.1.10:49997/callback",
+		"http://example.com:49997/callback",
+		"/callback",
+	} {
+		t.Run(redirect, func(t *testing.T) {
+			_, _, err := StartPKCEFlow(context.Background(), PKCEConfig{ClientID: "c", AuthURL: "https://idp/authorize", RedirectURL: redirect}, "Subject")
+			require.ErrorContains(t, err, "loopback")
+		})
+	}
+}
+
+// Upstream error bodies end up in the logs, so only a bounded prefix is kept.
+func TestPostTokenForm_TruncatesErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, strings.Repeat("x", 4096), http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := postTokenForm(srv.URL, "client", "", url.Values{"grant_type": {"refresh_token"}})
+
+	require.ErrorContains(t, err, "HTTP 502")
+	assert.Less(t, len(err.Error()), maxErrorBody+100)
+	assert.Contains(t, err.Error(), "(truncated)")
 }
