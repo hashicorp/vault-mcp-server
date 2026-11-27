@@ -254,7 +254,13 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, slot *sessi
 		logger.Infof("Shutting down StreamableHTTP server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		err := httpServer.Shutdown(shutdownCtx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Long-lived streams (SSE) don't drain on their own; force them closed.
+			logger.Warnf("Graceful shutdown timed out; closing remaining connections")
+			return httpServer.Close()
+		}
+		return err
 	case err := <-errC:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("StreamableHTTP server error: %w", err)
